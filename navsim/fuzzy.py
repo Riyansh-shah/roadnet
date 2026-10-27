@@ -65,14 +65,15 @@ def infer(hazard, blocked, unc, resil):
     return pen.reshape(shape)
 
 
-LUT_SHAPE = (21, 21, 6, 6)   # hazard, blocked, uncertainty, resilience
+LUT_SHAPE = (41, 41, 11, 11)   # hazard, blocked, uncertainty, resilience
 
 
 @lru_cache(maxsize=1)
 def lut():
     axes = [np.linspace(0, 1, n) for n in LUT_SHAPE]
-    grid = np.meshgrid(*axes, indexing="ij")
-    return infer(*grid)
+    pts = [g.ravel() for g in np.meshgrid(*axes, indexing="ij")]
+    out = np.concatenate([infer(*(p[i:i + 20000] for p in pts)) for i in range(0, pts[0].size, 20000)])
+    return out.reshape(LUT_SHAPE)
 
 
 def penalty(hazard, blocked, unc, resil):
