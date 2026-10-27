@@ -49,10 +49,10 @@ def oracle(world, t_max, runs=((0, True),)):
             reach[r] = _dilate(reach[r], diag) & free
             if r not in found:
                 if (reach[r] & near).any():           # next to the person: from here on, lead them out
-                    found[r] = t
+                    found[r] = t + 1                  # stamped at the end of the tick, like the mission
                     reach[r] = reach[r] & near
             elif reach[r][b.entrance]:
-                out[r] = (found[r], t, w.health)
+                out[r] = (found[r], t + 1, w.health)
         if w.health <= 0 or len(out) == len(runs):
             break
     return out

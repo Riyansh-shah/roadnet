@@ -93,8 +93,8 @@ class Mission:
             o = observe(w, u.pos, self.srng, cfg)
             bel.update(o)
             self.in_view[o.r, o.c] = True
-            if o.detected and self.t_find is None:
-                self.t_find, self.health_find = self.t, w.health
+            if o.detected and self.t_find is None:          # times are stamped at the end of the tick
+                self.t_find, self.health_find = self.t + 1, w.health
 
         state = bel.p_block[self.sites] > 0.5
         if (state != self.site_state).any():
@@ -251,7 +251,7 @@ class Mission:
         if u.state in ("ESCORT", "EXIT"):
             if u.pos in self.exits:
                 if u.state == "ESCORT":
-                    self.outcome, self.t_rescue = "rescued", self.t
+                    self.outcome, self.t_rescue = "rescued", self.t + 1
                 u.state = "OUT"
                 return
             if u.state == "ESCORT":

@@ -112,3 +112,110 @@ def draw_map(ax, m, layer="truth", vmax=None, routes=True, trails=True, legend=F
              Line2D([], [], marker="*", ls="", color=th["person"], markersize=10, label="person")]
         ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=8,
                   labelcolor=INK2)
+
+
+class MapView:
+    """One map whose artists are created once per scenario; update() only changes their data (fast redraws).
+
+    layer='truth': smoke and fire, true blockages, the person.
+    layer='belief': P(person), believed blockages, each drone's GA plan (its rooms outlined in its colour with the
+    visiting order) and its current A* path.
+    """
+
+    def __init__(self, ax, m, layer, theme=DARK):
+        from matplotlib.patches import Rectangle
+        self.ax, self.layer, self.th = ax, layer, theme
+        th, b = theme, m.b
+        H, W = b.shape
+        ax.clear()
+        ax.set_axis_off()
+        self.im = ax.imshow(self._img(m), interpolation="nearest")
+        static = []
+        if layer == "truth":                     # room names once is enough; the belief map stays uncluttered
+            for k in range(b.n_rooms):
+                rr, cc = np.nonzero(b.room_id == k)
+                static.append(ax.text(cc.min() + 0.2, rr.min() + 0.3, f"R{k}", color=th["label"], fontsize=7,
+                                      ha="left", va="top", zorder=2))
+        er, ec = b.entrance
+        static.append(ax.text(ec - 0.9, er, "IN / OUT", color=th["exit"], fontsize=7, fontweight="bold",
+                              rotation=90, ha="right", va="center", zorder=4))
+        ex = np.array(b.exits)
+        static.append(ax.scatter(ex[:, 1], ex[:, 0], marker="s", s=40, c=th["exit"], edgecolors=th["ring"], lw=1,
+                                 zorder=4))
+        self.blocked = ax.scatter([], [], marker="x", s=30, c=th["blocked"], lw=1.6, zorder=4)
+
+        self.rects, self.order = [], []
+        if layer == "belief":
+            for a in range(b.n_areas):
+                rr, cc = np.nonzero(b.area_id == a)
+                r0, r1, c0, c1 = rr.min(), rr.max(), cc.min(), cc.max()
+                rect = Rectangle((c0 - 0.4, r0 - 0.4), c1 - c0 + 0.8, r1 - r0 + 0.8, fill=False, lw=1.8,
+                                 visible=False, zorder=3)
+                ax.add_patch(rect)
+                self.rects.append(rect)
+                self.order.append(ax.text(c1 + 0.3, r1 + 0.3, "", fontsize=7.5, fontweight="bold", ha="right",
+                                          va="bottom", visible=False, zorder=6))
+        K = len(m.units)
+        cols = [th["units"][k % len(th["units"])] for k in range(K)]
+        self.cols = cols
+        self.trails = [ax.plot([], [], color=c, lw=1.2, alpha=th["trail_alpha"], zorder=3)[0] for c in cols]
+        self.paths = [ax.plot([], [], color=c, lw=2.2, zorder=5)[0] for c in cols] if layer == "belief" else []
+        self.drones = ax.scatter(np.zeros(K), np.zeros(K), s=np.zeros(K), c=cols, edgecolors=th["ring"], lw=1.3,
+                                 zorder=6)
+        self.nums = [ax.text(0, 0, str(k + 1), color="white", fontsize=7, fontweight="bold", ha="center",
+                             va="center", visible=False, zorder=7) for k in range(K)]
+        self.halo = ax.scatter([], [], s=480, c=th["person"], alpha=0.18, lw=0, zorder=7)
+        self.star = ax.scatter([], [], marker="*", s=230, c=th["person"], edgecolors=th["ring"], lw=0.8, zorder=8)
+        ax.set_xlim(-3.0, W - 0.5)
+        ax.set_ylim(H - 0.5, -0.5)
+        # everything that sits on the map, in drawing order (used for blitting)
+        self.artists = sorted([self.im, *static, self.blocked, *self.rects, *self.order, *self.trails, *self.paths,
+                               self.drones, *self.nums, self.halo, self.star], key=lambda a: a.get_zorder())
+
+    def _img(self, m):
+        b, th = m.b, self.th
+        if self.layer == "truth":
+            return _image(b, m.world.h, th["smoke"], 1.0, th)
+        bel = m.belief
+        field = np.where(b.area_id >= 0, bel.pp if bel.bayes else ~bel.looked, 0).astype(float)
+        return _image(b, field, th["prob"], field.max(), th)
+
+    def update(self, m, show_person=True, show_plan=True):
+        b, w, bel = m.b, m.world, m.belief
+        self.im.set_data(self._img(m))
+        blk = np.argwhere(w.blocked) if self.layer == "truth" else np.argwhere((bel.p_block > 0.5) & ~b.solid)
+        self.blocked.set_offsets(blk[:, ::-1] if len(blk) else np.empty((0, 2)))
+
+        for r, t in zip(self.rects, self.order):
+            r.set_visible(False)
+            t.set_visible(False)
+        offs, sizes = [], []
+        for k, u in enumerate(m.units):
+            inside = u.pos is not None and u.state != "OUT"
+            offs.append((u.pos[1], u.pos[0]) if u.pos is not None else (0, 0))
+            sizes.append(130 if inside else 0)
+            self.nums[k].set_visible(inside)
+            if inside:
+                self.nums[k].set_position((u.pos[1], u.pos[0]))
+            tr = np.array(u.trail) if u.trail else np.empty((0, 2))
+            self.trails[k].set_data(tr[:, 1], tr[:, 0]) if len(tr) else self.trails[k].set_data([], [])
+            if self.layer == "belief":
+                p = np.array(u.path) if (show_plan and inside and len(u.path) > 1) else np.empty((0, 2))
+                self.paths[k].set_data(p[:, 1], p[:, 0]) if len(p) else self.paths[k].set_data([], [])
+                if show_plan and u.state == "SEARCH":
+                    for i, a in enumerate(([u.area] if u.area >= 0 else []) + u.route):
+                        self.rects[a].set_edgecolor(self.cols[k])
+                        self.rects[a].set_visible(True)
+                        self.order[a].set_text(f"D{k + 1}·{i + 1}")
+                        self.order[a].set_color(self.cols[k])
+                        self.order[a].set_visible(True)
+        self.drones.set_offsets(np.array(offs, float))
+        self.drones.set_sizes(np.array(sizes, float))
+
+        visible = (self.layer == "truth" and show_person) or m.t_find is not None
+        pos = np.array([[w.person[1], w.person[0]]], float) if visible else np.empty((0, 2))
+        col = self.th["person"] if w.health > 0 else self.th["label"]
+        for s in (self.halo, self.star):
+            s.set_offsets(pos)
+            s.set_color(col)
+        self.star.set_edgecolor(self.th["ring"])
