@@ -23,6 +23,10 @@ class Config:
     p_block_rate: float = 0.004  # per site per tick, times local hazard
     health_rate: float = 0.006   # person health lost per tick at hazard 1
     t_max: int = 900
+    # winnable-scenario check (navsim/scenario.py): an all-knowing rescuer starting this late must still succeed
+    oracle_delay: int = 120
+    oracle_min_health: float = 0.3
+    oracle_max_time: int = 450
 
     # sensor
     radius: int = 4

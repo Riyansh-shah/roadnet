@@ -12,12 +12,11 @@ import numpy as np
 
 from .astar import astar, dijkstra
 from .belief import BeliefMap, RawMap
-from .building import make_building
 from .config import METHODS, Config
 from .fuzzy import cost_grid, lut
 from .ga import ga_allocate, greedy_allocate
+from .scenario import make_scenario
 from .sensor import observe
-from .world import World
 
 
 @dataclass
@@ -43,11 +42,10 @@ class Mission:
     def __init__(self, seed, method="FULL", n_rooms=10, k_units=3, cfg=None):
         self.cfg = cfg = cfg or Config()
         self.seed, self.method, self.m = seed, method, METHODS[method]
-        ws, ss, gs = np.random.SeedSequence(seed).spawn(3)
-        rng_w = np.random.default_rng(ws)          # building + world: identical for every method
-        self.b = make_building(n_rooms, rng_w, cfg)
-        self.world = World(self.b, cfg, rng_w)
-        self.srng, self.grng = np.random.default_rng(ss), np.random.default_rng(gs)
+        sc = make_scenario(seed, n_rooms, cfg)     # building + world: identical for every method, always winnable
+        self.b, self.world = sc.building, sc.world
+        self.oracle_find, self.oracle_rescue, self.attempts = sc.oracle_find, sc.oracle_rescue, sc.attempts
+        self.srng, self.grng = np.random.default_rng(sc.sensor_seed), np.random.default_rng(sc.ga_seed)
         self.belief = BeliefMap(self.b, cfg) if self.m["bayes"] else RawMap(self.b, cfg)
         self.units = [Unit(i) for i in range(k_units)]
         self.exits = [tuple(e) for e in self.b.exits]
