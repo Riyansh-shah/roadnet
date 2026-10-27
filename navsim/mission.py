@@ -53,8 +53,14 @@ class Mission:
         self.exits = [tuple(e) for e in self.b.exits]
         self.t = 0
         self.t_find = self.t_rescue = self.outcome = self.escort = self.health_find = None
-        self.dirty, self.last_alloc, self.n_bel_blocked = True, -10 ** 9, 0
+        self.dirty, self.last_alloc = True, -10 ** 9
+        # cells whose believed state changes the building's connectivity: doors and corridor debris sites
+        self.sites = self.b.door.copy()
+        r0, r1 = self.b.corr_rows
+        self.sites[r0:r1 + 1, self.b.cut_cols] = True
+        self.site_state = self.belief.p_block[self.sites] > 0.5
         self.ga_calls = self.replans = 0
+        self.escort_dose = 0.0
         self.ga_ms, self.tick_ms = [], []
         self.last_curve = None
         self.cost = None
@@ -88,17 +94,20 @@ class Mission:
             if o.detected and self.t_find is None:
                 self.t_find, self.health_find = self.t, w.health
 
-        nb = int((bel.p_block > 0.5).sum())
-        if nb != self.n_bel_blocked:
-            self.n_bel_blocked, self.dirty = nb, True
+        state = bel.p_block[self.sites] > 0.5
+        if (state != self.site_state).any():
+            self.site_state, self.dirty = state, True
         self.cost = cost = cost_grid(bel, b.solid, cfg, 1.0, self.m["fuzzy"])
 
         if self.t_find is not None and self.escort is None:
             self._start_escort(cost)
-        if self.t_find is None and (self.dirty or self.t - self.last_alloc >= cfg.realloc_every):
+        since = self.t - self.last_alloc
+        if self.t_find is None and ((self.dirty and since >= cfg.realloc_gap) or since >= cfg.realloc_every):
             self._allocate(cost)
         for u in self.active():
             self._act(u, cost)
+        if self.escort is not None and self.escort.state == "ESCORT":
+            self.escort_dose += w.h[w.person]      # smoke the civilian breathes while being led out
 
         self.tick_ms.append(1000 * (time.perf_counter() - t_start))
         self.t += 1
@@ -182,7 +191,7 @@ class Mission:
             if u.area < 0:
                 if not u.route:
                     self.dirty = True
-                    return None
+                    return self._best_cell(u, b.area_id >= 0, cost)
                 u.area = u.route.pop(0)
                 u.area_m0, u.area_t0 = self._mass_un(u.area), -1
             if not self._area_done(u):
@@ -192,16 +201,21 @@ class Mission:
             u.area_t0 = self.t
         if u.area_t0 < 0:
             return tuple(int(v) for v in b.viewpoints[u.area])
-        # inside the area. Bayes: the most probable cell (nearer cells break ties).
-        # Coverage: the nearest cell not looked at yet.
-        rr, cc = np.nonzero((b.area_id == u.area) & np.isfinite(cost))
+        return self._best_cell(u, b.area_id == u.area, cost) or tuple(int(v) for v in b.viewpoints[u.area])
+
+    def _best_cell(self, u, mask, cost):
+        """Bayes: the most probable cell in mask (nearer cells break ties). Coverage: the nearest cell not looked at."""
+        bel = self.belief
+        rr, cc = np.nonzero(mask & np.isfinite(cost))
+        if not len(rr):
+            return None
         d = np.hypot(rr - u.pos[0], cc - u.pos[1])
         if bel.bayes:
             score = bel.pp_un[rr, cc] / (1 + 0.1 * d)
         else:
             score = np.where(bel.looked[rr, cc], -np.inf, -d)
-        if not len(rr) or not np.isfinite(score.max()):
-            return tuple(int(v) for v in b.viewpoints[u.area])
+        if not np.isfinite(score.max()):
+            return None
         i = int(np.argmax(score))
         return int(rr[i]), int(cc[i])
 
@@ -237,7 +251,7 @@ class Mission:
                 u.state = "OUT"
                 return
             if u.state == "ESCORT":
-                cost = cost_grid(self.belief, b.solid, cfg, w.health, self.m["fuzzy"])
+                cost = cost_grid(self.belief, b.solid, cfg, 0.5 * w.health, self.m["fuzzy"])
             goals = self.exits
         others = [v.pos for v in self.active() if v is not u]
         if others:
@@ -249,7 +263,7 @@ class Mission:
         if status == "noroute":
             u.stuck += 1
             self.belief.relax(self.in_view)   # forget blockages out of view, replan next tick
-            if u.state == "SEARCH" and u.stuck >= 2:
+            if u.state == "SEARCH" and u.area >= 0 and u.stuck >= 2:
                 self._finish_area(u)          # still unreachable after relaxing
         else:
             u.stuck = 0
@@ -292,6 +306,7 @@ class Mission:
             health=round(float(w.health), 4),
             escort_loss=nan if self.t_rescue is None else round(float(self.health_find - w.health), 4),
             escort_ticks=nan if self.t_rescue is None else self.t_rescue - self.t_find,
+            escort_dose=nan if self.t_rescue is None else round(float(self.escort_dose), 4),
             unit_exposure=round(float(sum(u.exposure for u in us)), 3),
             unit_dist=round(sum(u.dist for u in us), 2),
             bumps=sum(u.bumps for u in us), replans=self.replans, ga_calls=self.ga_calls,

@@ -14,7 +14,7 @@ class Config:
     p_connect: float = 0.5     # connecting door between neighbouring rooms
 
     # world (ground truth)
-    t_pre: int = 60            # fire burns this long before the units arrive
+    t_pre: int = 150           # fire burns this long before the units arrive
     p_ignite: float = 0.03     # per tick, for a cell next to a burning cell
     diffusion: float = 0.2     # smoke/heat diffusion rate (stable below 0.25)
     decay: float = 0.003
@@ -60,6 +60,7 @@ class Config:
     # mission
     entry_gap: int = 2         # ticks between units passing the entrance
     realloc_every: int = 25
+    realloc_gap: int = 5       # at least this many ticks between event-triggered reallocations
     replan_every: int = 5
     area_done_frac: float = 0.15   # area searched when its mass falls below this fraction
     dwell_max: int = 40
