@@ -14,7 +14,7 @@ from .astar import astar, dijkstra
 from .belief import BeliefMap, RawMap
 from .building import make_building
 from .config import METHODS, Config
-from .fuzzy import cost_grid
+from .fuzzy import cost_grid, lut
 from .ga import ga_allocate, greedy_allocate
 from .sensor import observe
 from .world import World
@@ -64,6 +64,8 @@ class Mission:
         self.ga_ms, self.tick_ms = [], []
         self.last_curve = None
         self.cost = None
+        self.unreach_until = np.full(self.b.n_areas, -1)   # areas with no route, skipped for a while
+        lut()                                              # compile the fuzzy lookup table before timing starts
 
     @property
     def done(self):
@@ -127,7 +129,7 @@ class Mission:
         """Areas worth searching, the cost matrix D (searchers + areas, areas), P, dwell, t0, searchers."""
         cfg, b, bel = self.cfg, self.b, self.belief
         searchers = [u for u in self.units if u.state in ("QUEUE", "SEARCH")]
-        mass = bel.area_mass()
+        mass = bel.area_mass() * (self.unreach_until <= self.t)
         areas = np.flatnonzero(mass > (cfg.mass_eps if bel.bayes else 0))
         if not len(areas):
             areas = np.flatnonzero(mass > 0)
@@ -205,8 +207,9 @@ class Mission:
 
     def _best_cell(self, u, mask, cost):
         """Bayes: the most probable cell in mask (nearer cells break ties). Coverage: the nearest cell not looked at."""
-        bel = self.belief
-        rr, cc = np.nonzero(mask & np.isfinite(cost))
+        bel, b = self.belief, self.b
+        ok = np.append(self.unreach_until <= self.t, False)       # area -1 (doors, walls) never a goal
+        rr, cc = np.nonzero(mask & np.isfinite(cost) & ok[b.area_id])
         if not len(rr):
             return None
         d = np.hypot(rr - u.pos[0], cc - u.pos[1])
@@ -262,9 +265,14 @@ class Mission:
         status = self._move(u, cost, goals)
         if status == "noroute":
             u.stuck += 1
-            self.belief.relax(self.in_view)   # forget blockages out of view, replan next tick
-            if u.state == "SEARCH" and u.area >= 0 and u.stuck >= 2:
-                self._finish_area(u)          # still unreachable after relaxing
+            self.belief.relax(self.in_view)   # forget unconfirmed blockages out of view, retry next tick
+            if u.state == "SEARCH" and u.stuck >= 2:   # still no route: skip that area for a while
+                a = b.area_id[goals[0]]
+                if a >= 0:
+                    self.unreach_until[a] = self.t + cfg.unreach_ticks
+                if u.area >= 0:
+                    self._finish_area(u)
+                self.dirty = True
         else:
             u.stuck = 0
         if status == "moved" and u.state == "ESCORT":

@@ -130,8 +130,8 @@ def fig_fuzzy():
             y = fuzzy.trap(x, *p)
             ax.plot(x, y, color=PALETTE[j], lw=2)
             k = int(np.argmax(y))
-            ax.text(x[k], 1.06, term, color=INK2, fontsize=7, ha="center", va="bottom")
-        ax.set_ylim(0, 1.25)
+            ax.text(x[k], 1.05 + 0.13 * (j % 2), term, color=INK2, fontsize=7, ha="center", va="bottom")
+        ax.set_ylim(0, 1.32)
         ax.set_yticks([0, 0.5, 1])
         ax.set_title(name, loc="left")
         style_axes(ax)
@@ -140,20 +140,22 @@ def fig_fuzzy():
         else:
             ax.set_ylabel("membership")
     hz, bl = np.meshgrid(np.linspace(0, 1, 101), np.linspace(0, 1, 101), indexing="xy")
-    for i, (res, who) in enumerate(((1.0, "protected unit (resilience 1)"), (0.45, "escorted civilian (0.5 x health 0.9)"))):
-        ax = fig.add_subplot(gs[1, 2 * i:2 * i + 2])
+    sub = gs[1, :].subgridspec(1, 3, width_ratios=[1, 1, 0.04], wspace=0.25)
+    surf = []
+    for i, (res, who) in enumerate(((1.0, "protected unit, resilience 1"), (0.45, "escorted civilian, resilience 0.45"))):
+        ax = fig.add_subplot(sub[0, i])
+        surf.append(ax)
         pen = fuzzy.infer(hz, bl, 0.0, res)
         im = ax.imshow(pen, origin="lower", extent=(0, 1, 0, 1), cmap=PROB, vmin=0, vmax=1, aspect="auto")
         cs = ax.contour(hz, bl, pen, levels=[0.2, 0.4, 0.6, 0.8], colors="white", linewidths=0.8)
         ax.clabel(cs, fontsize=7, fmt="%.1f")
         ax.set_xlabel("believed hazard")
-        ax.set_ylabel("believed P(blocked)")
-        ax.set_title(f"Penalty surface: {who}", loc="left")
+        if i == 0:
+            ax.set_ylabel("believed P(blocked)")
+        ax.set_title(f"Penalty: {who}", loc="left")
         ax.tick_params(colors=INK2, labelsize=8)
-    cax = fig.add_subplot(gs[1, 4])
-    cax.set_axis_off()
-    cb = fig.colorbar(im, ax=cax, fraction=0.5, location="left")
-    cb.set_label("penalty (cell cost = 1 + 20 x penalty)", color=INK2)
+    cb = fig.colorbar(im, cax=fig.add_subplot(sub[0, 2]))
+    cb.set_label("penalty  (cell cost = 1 + 20 x penalty)", color=INK2)
     cb.outline.set_visible(False)
     fig.suptitle(f"Mamdani fuzzy cost: 4 inputs, {len(fuzzy.RULES)} rules, centroid defuzzification",
                  x=0.02, ha="left", fontsize=10, fontweight="bold")

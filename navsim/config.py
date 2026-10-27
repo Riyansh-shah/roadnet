@@ -36,7 +36,6 @@ class Config:
     prior_door: float = 0.15
     prior_cell: float = 0.02
     lo_clamp: float = 4.0
-    lo_drift: float = 0.01     # log-odds drift back to the prior per tick
     haz_var0: float = 0.25
     haz_q: float = 0.002       # hazard process noise per tick
 
@@ -64,6 +63,7 @@ class Config:
     replan_every: int = 5
     area_done_frac: float = 0.15   # area searched when its mass falls below this fraction
     dwell_max: int = 40
+    unreach_ticks: int = 30    # an area with no route is skipped this long
     cover_frac: float = 0.95   # coverage baseline: area cleared when this share of its cells was looked at
 
 

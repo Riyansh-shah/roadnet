@@ -3,8 +3,8 @@
 BeliefMap (Bayes):
   * P(person) per cell: Bayesian search theory. A look at cell c that finds nobody multiplies its prior by
     (1 - p_d(c)), and the map is renormalised. Cells missed in smoke keep part of their probability.
-  * P(blocked) per cell: binary Bayes filter in log-odds, with a slow drift back to the prior so that
-    blockages appearing later are still caught.
+  * P(blocked) per cell: binary Bayes filter in log-odds. Its predict step is the world's transition model:
+    a door or corridor section can become blocked (more likely in smoke) but never clears.
   * Hazard per cell: 1-D Kalman filter (Gaussian mean/variance), variance grows while a cell is unseen.
 RawMap (ablation without Bayes): last reading only, and room-by-room "searched" flags.
 """
@@ -30,6 +30,10 @@ class BeliefMap:
         self.b, self.cfg = b, cfg
         self.lo0 = logit(_prior_block(b, cfg))
         self.lo = self.lo0.copy()
+        self.confirmed = np.zeros(b.shape, bool)     # bumped into: certain, and blockages never clear
+        self.site = b.door.copy()                    # cells that can become blocked
+        r0, r1 = b.corr_rows
+        self.site[r0:r1 + 1, b.cut_cols] = True
         self.mu = np.zeros(b.shape)
         self.var = np.full(b.shape, cfg.haz_var0)
         self.searchable = b.area_id >= 0
@@ -38,7 +42,7 @@ class BeliefMap:
 
     @property
     def p_block(self):
-        return 1 / (1 + np.exp(-self.lo))
+        return np.where(self.confirmed, 1.0, 1 / (1 + np.exp(-self.lo)))
 
     @property
     def hazard(self):
@@ -54,7 +58,9 @@ class BeliefMap:
 
     def predict(self):
         cfg = self.cfg
-        self.lo += cfg.lo_drift * (self.lo0 - self.lo)
+        p = self.p_block
+        p = p + (1 - p) * cfg.p_block_rate * self.mu * self.site     # P(free -> blocked) this tick
+        self.lo = np.clip(logit(np.clip(p, 1e-6, 1 - 1e-6)), -cfg.lo_clamp, cfg.lo_clamp)
         np.minimum(self.var + cfg.haz_q, cfg.haz_var0, out=self.var)
 
     def update(self, o):
@@ -75,10 +81,10 @@ class BeliefMap:
                 self.pp_un /= s
 
     def mark_blocked(self, cell):
-        self.lo[cell] = self.cfg.lo_clamp
+        self.confirmed[cell] = True
 
     def relax(self, keep):
-        """No route left: forget believed blockages outside `keep` (cells in view) and try again."""
+        """No route left: forget believed (not confirmed) blockages outside `keep` (cells in view)."""
         sel = ~keep & (self.lo > self.lo0)
         self.lo[sel] = self.lo0[sel]
 
@@ -97,11 +103,12 @@ class RawMap:
         self.haz = np.zeros(b.shape)
         self.seen = np.zeros(b.shape, bool)
         self.looked = np.zeros(b.shape, bool)    # looked at since the current sweep started
+        self.confirmed = np.zeros(b.shape, bool)
         self.searchable = b.area_id >= 0
         self._area_idx = b.area_id[self.searchable]
         self._area_n = np.bincount(self._area_idx, minlength=b.n_areas)
 
-    p_block = property(lambda self: self.blk)
+    p_block = property(lambda self: np.where(self.confirmed, 1.0, self.blk))
     hazard = property(lambda self: self.haz)
     unc = property(lambda self: (~self.seen).astype(float))
 
@@ -115,7 +122,7 @@ class RawMap:
         self.looked[o.r, o.c] = True
 
     def mark_blocked(self, cell):
-        self.blk[cell] = 1.0
+        self.confirmed[cell] = True
         self.seen[cell] = True
 
     def relax(self, keep):

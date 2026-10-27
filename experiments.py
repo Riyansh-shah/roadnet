@@ -35,12 +35,14 @@ def _episode(job):
 def _allocation(job):
     seed, n_rooms, k = job
     m = Mission(seed, "FULL", n_rooms, k)
-    while m.t < 30 and m.t_find is None:
+    while m.t < 30 and m.t_find is None and not m.done:
         m.step()
-    if m.t_find is not None:
+    if m.t_find is not None or m.done:
         return None, []
     areas, D, P, dwell, t0, searchers = m.allocation_problem(cost_grid(m.belief, m.b.solid, m.cfg))
     K = len(searchers)
+    if len(areas) < 2 or K == 0:
+        return None, []
     rng = np.random.default_rng(seed)
     t = time.perf_counter()
     _, f_ga, curve = ga_allocate(D, P, dwell, t0, K, rng, m.cfg)
