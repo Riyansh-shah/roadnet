@@ -76,14 +76,14 @@ def fig_mission(seed):
         if m.t_find is not None and "found" not in snaps:
             snaps["found"] = _copy_view(m)
     snaps["rescued"] = _copy_view(m)
-    titles = {"entry": "t = 8 s: units enter one by one and fan out on their GA routes",
-              "found": f"t = {m.t_find} s: person detected; the nearest unit goes to them, the others leave",
+    titles = {"entry": "t = 8 s: drones enter one by one and fan out on their GA routes",
+              "found": f"t = {m.t_find} s: person detected; the nearest drone goes to them, the others leave",
               "rescued": f"t = {m.t_rescue} s: person led back out through the entrance (health {m.world.health:.2f})"}
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 8.4))
     for ax, key in zip(axes, ("entry", "found", "rescued")):
         draw_map(ax, snaps[key], "truth", legend=(key == "rescued"))
         ax.set_title(titles[key], loc="left", fontweight="normal", color=INK2)
-    fig.suptitle(f"Example mission (FULL, seed {seed}, 10 rooms, 3 units): orange = smoke/fire", x=0.02, ha="left",
+    fig.suptitle(f"Example mission (FULL, seed {seed}, 10 rooms, 3 drones): orange = smoke/fire", x=0.02, ha="left",
                  fontsize=10, fontweight="bold")
     fig.tight_layout()
     save(fig, "fig1_mission.png")
@@ -120,7 +120,7 @@ def fig_bayes(seed):
     cb = fig.colorbar(sm, ax=axes, shrink=0.5, pad=0.01)
     cb.set_label("P(person in cell)", color=INK2)
     cb.outline.set_visible(False)
-    fig.suptitle(f"Bayesian search map shared by the units (seed {seed}); red x = believed blocked",
+    fig.suptitle(f"Bayesian search map shared by the drones (seed {seed}); red x = believed blocked",
                  x=0.02, ha="left", fontsize=10, fontweight="bold")
     save(fig, "fig3_bayes.png")
 
@@ -149,7 +149,7 @@ def fig_fuzzy():
     hz, bl = np.meshgrid(np.linspace(0, 1, 101), np.linspace(0, 1, 101), indexing="xy")
     sub = gs[1, :].subgridspec(1, 3, width_ratios=[1, 1, 0.04], wspace=0.25)
     surf = []
-    for i, (res, who) in enumerate(((1.0, "protected unit, resilience 1"), (0.45, "escorted civilian, resilience 0.45"))):
+    for i, (res, who) in enumerate(((1.0, "drone, resilience 1"), (0.45, "escorted civilian, resilience 0.45"))):
         ax = fig.add_subplot(sub[0, i])
         surf.append(ax)
         pen = fuzzy.infer(hz, bl, 0.0, res)
@@ -199,7 +199,7 @@ def fig_ablation(e1):
         ax.xaxis.grid(True, color=GRID, lw=0.6)
         ax.margins(x=0.25)
     axes[0].set_yticks(y, [LABEL[m] for m in methods])
-    fig.suptitle(f"Leave-one-out ablation, 100 test seeds (10 rooms, 3 units). * = mean with 95% CI over the "
+    fig.suptitle(f"Leave-one-out ablation, 100 test seeds (10 rooms, 3 drones). * = mean with 95% CI over the "
                  f"{len(ok_all)} seeds every method rescued", x=0.02, ha="left", fontsize=10, fontweight="bold")
     fig.tight_layout()
     save(fig, "fig4_ablation.png")
@@ -239,7 +239,7 @@ def fig_ga(e3, curve):
             v = (e3[key][sel] / e3["greedy"][sel]).mean()
             b.bar(i + (j - 1) * w, v, width=w - 0.03, color=col, label=lab if i == 0 else None)
             b.text(i + (j - 1) * w, v, f"{v:.2f}", ha="center", va="bottom", fontsize=8, color=INK2)
-    b.set_xticks(range(len(cfgs)), [f"N={n} rooms, K={k} units" for n, k in cfgs])
+    b.set_xticks(range(len(cfgs)), [f"N={n} rooms, K={k} drones" for n, k in cfgs])
     b.set_ylabel("expected find time / greedy")
     b.set_title("Allocation objective at t = 30 s (lower is better)", loc="left")
     b.legend(frameon=False, fontsize=8, ncol=3, loc="upper left")
@@ -273,7 +273,7 @@ def fig_scaling(e2):
                     axes[r, c].text(Ks[-1], v, "  " + m, color=INK2, fontsize=8,
                                     va="bottom" if m == hi else "top")
         axes[0, c].set_title(f"{n} rooms", loc="left")
-        axes[1, c].set_xlabel("units K")
+        axes[1, c].set_xlabel("drones K")
     axes[0, 0].set_ylabel("rescued alive (%)")
     axes[1, 0].set_ylabel("time to find (s), rescued runs")
     for ax in axes.ravel():
@@ -283,7 +283,7 @@ def fig_scaling(e2):
     for ax in axes[0]:
         ax.set_ylim(50, 100)                      # one honest scale: 1 seed = 2 points
     axes[0, 0].legend(frameon=False, fontsize=8, loc="lower right")
-    fig.suptitle("More units find the person sooner, with diminishing returns (50 seeds per point)",
+    fig.suptitle("More drones find the person sooner, with diminishing returns (50 seeds per point)",
                  x=0.02, ha="left", fontsize=10, fontweight="bold")
     fig.tight_layout()
     save(fig, "fig6_scaling.png")
@@ -300,7 +300,7 @@ def fig_scaling(e2):
     ax.text(1, 1000, "real-time budget: 1 tick = 1000 ms", color=MUTED, fontsize=8, va="bottom")
     ax.set_yscale("log")
     ax.set_xticks(Ks)
-    ax.set_xlabel("units K")
+    ax.set_xlabel("drones K")
     ax.set_ylabel("compute per tick (ms, log)")
     ax.set_title("Decision time per tick, FULL: p95 (solid) and mean (dashed)", loc="left")
     ax.margins(x=0.2)
@@ -318,10 +318,10 @@ def fmt(x, lo=None, hi=None, d=1):
 
 def tables(e1, ok_all, e2, e3):
     L = ["# Results\n", "All experiments use test seeds 100+ (calibration used seeds 0-39).\n"]
-    L += ["## E1: leave-one-out ablation (10 rooms, 3 units, seeds 100-199)\n",
+    L += ["## E1: leave-one-out ablation (10 rooms, 3 drones, seeds 100-199)\n",
           f"Times and escort dose: mean [95% bootstrap CI] over the {len(ok_all)} seeds every method rescued.\n",
           "| method | rescued % | casualty % | time to find (s) | time to rescue (s) | escort smoke dose | bumps | "
-          "unit exposure | ms/tick mean | ms/tick p95 |", "|---|---|---|---|---|---|---|---|---|---|"]
+          "drone smoke exposure | ms/tick mean | ms/tick p95 |", "|---|---|---|---|---|---|---|---|---|---|"]
     for m in METHOD_ORDER:
         sel = e1["method"] == m
         com = sel & np.isin(e1["seed"], ok_all)
@@ -349,10 +349,11 @@ def tables(e1, ok_all, e2, e3):
             if ok and fok:
                 dt.append(tf - ftf)
                 dd.append(d - fd)
-        L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {mcnemar_p(only_f, only_m):.2f} | {fmt(*boot_ci(dt))} | "
-                 f"{fmt(*boot_ci(dd), d=3)} |")
+        p = mcnemar_p(only_f, only_m)
+        ps = "<0.01" if p < 0.01 else f"{p:.2f}"
+        L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {ps} | {fmt(*boot_ci(dt))} | {fmt(*boot_ci(dd), d=3)} |")
     L += ["", "## E2: scaling (seeds 100-149)\n", "Times are means over the rescued runs.\n",
-          "| rooms | units | method | rescued % | time to find (s) | time to rescue (s) | ms/tick p95 |",
+          "| rooms | drones | method | rescued % | time to find (s) | time to rescue (s) | ms/tick p95 |",
           "|---|---|---|---|---|---|---|"]
     for n in (6, 10, 16):
         for k in (1, 2, 3, 4, 6):
@@ -362,7 +363,7 @@ def tables(e1, ok_all, e2, e3):
                 L.append(f"| {n} | {k} | {m} | {100 * e2['success'][sel].mean():.0f} | {np.nanmean(e2['t_find'][ok]):.1f} | "
                          f"{np.nanmean(e2['t_rescue'][ok]):.1f} | {e2['tick_ms_p95'][sel].mean():.1f} |")
     L += ["", "## E3: allocation objective at t = 30 s (expected find time; lower is better)\n",
-          "| rooms | units | problems | GA better than greedy | GA gain over greedy % | random vs greedy % | "
+          "| rooms | drones | problems | GA better than greedy | GA gain over greedy % | random vs greedy % | "
           "GA ms | greedy ms |", "|---|---|---|---|---|---|---|---|"]
     for n, k in ((10, 3), (16, 6)):
         sel = (e3["n_rooms"] == n) & (e3["k_units"] == k)
