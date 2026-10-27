@@ -1,7 +1,7 @@
 """Mamdani fuzzy inference system for the traversal cost of a cell (written from scratch).
 
 Inputs  : Hazard (belief smoke/heat), Blocked (belief P(blocked)), Uncertainty (how stale the hazard estimate is),
-          Resilience of whoever crosses the cell (1 for a unit in protective gear; 0.5 x health for the civilian,
+          Resilience of whoever crosses the cell (1 for a drone; 0.5 x health for the civilian,
           who has no breathing apparatus).
 Output  : Penalty in [0, 1]; cell cost = 1 + w * Penalty.
 Engine  : min for AND, clipping implication, max aggregation, centroid defuzzification.
@@ -29,7 +29,7 @@ PENALTY = {"VLow": (0, 0, 0.05, 0.2), "Low": (0.05, 0.2, 0.2, 0.4), "Med": (0.25
 INPUTS = {"Hazard": HAZARD, "Blocked": BLOCKED, "Uncertainty": UNCERT, "Resilience": RESIL}
 
 # (Hazard, Blocked, Uncertainty) -> Penalty; columns are Blocked = Low, Med, High.
-# Units wear protective gear: smoke alone only costs Low/Med, a possibly blocked door costs a lot (a dead end
+# Drones tolerate smoke: smoke alone only costs Low/Med, a possibly blocked door costs a lot (a dead end
 # wastes time), and unexplored cells are free to enter. A stale smoke reading is assumed to have got worse.
 _BASE = {
     "Known": {"Low": ("VLow", "Med", "VHigh"),
