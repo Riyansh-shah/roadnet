@@ -1,155 +1,135 @@
-# Drone search and rescue in a burning building: Fuzzy A*, Bayesian search and GA allocation
+# Drone search and rescue in a burning building: Bayesian search, GA allocation and A*
 
 ![demo](figs/demo_seed3.gif)
 
-**Task.** K drones enter a single-floor building with N rooms through **one door, which is also the only way out**.
-One person is somewhere inside at a random spot. The person is unconscious and doesn't move, but loses health in smoke.
-The drones must **find the person and lead them back out through that door**. Meanwhile the fire spreads, smoke
-diffuses, and doors and corridor sections get blocked by debris. The drones know the floor plan, but not the fire,
-the blockages or where the person is. A short-range noisy sensor is all they have, and they decide every simulated second
-(1 tick = 1 s).
+## The problem
 
-## Soft-computing methods and the job each one does
+K drones enter a single-floor building with N rooms through **one door, which is also the only way out**. One person is
+somewhere inside, unconscious, at a random spot, and loses health in smoke. The drones must **find the person and lead
+them back out through that door**, while the fire spreads, smoke diffuses and debris blocks doors and corridor sections.
+The drones know the floor plan, but not the fire, the blockages or where the person is. All they have is a short-range
+noisy sensor, and they make a decision every simulated second.
 
-| Method | Where | Job |
+**Every scenario is winnable.** `navsim/scenario.py` keeps a scenario only if an all-knowing rescuer could still save the person
+even when it **starts 120 s late**. That rescuer knows the fire, the debris and where the person is. Without this check,
+25% of random fires made the rescue impossible for anyone.
+
+## The method: three parts, each kept because it measurably helps
+
+| Part | Question it answers | How |
 |---|---|---|
-| **Bayesian inference** | `navsim/belief.py` | A shared **P(person) map** over every free cell. Each look that finds nobody multiplies the cell's probability by (1 − p_detect), and p_detect falls with distance and smoke (Bayesian search theory), so areas missed in smoke keep part of their probability and get searched again. Also a **binary Bayes filter (log-odds) for P(blocked)** per cell. Its predict step is the world's transition model: a door can become blocked, more likely in smoke, but never clears. Bumping into a blockage is a certain observation, so it stays at P = 1. And a **1-D Kalman filter** for smoke per cell, whose variance grows while a cell goes unseen. |
-| **Fuzzy A\*** | `navsim/fuzzy.py`, `navsim/astar.py` | A **Mamdani FIS** (4 inputs: hazard, P(blocked), uncertainty, resilience; 20 rules; centroid defuzzification) turns the belief into a per-cell traversal cost, and **A\*** plans on it every few ticks. Drones tolerate smoke but avoid doors that are probably blocked. The civilian being led out (resilience = 0.5 × health) gets much more smoke-averse routes. For real-time use the FIS is compiled into a 4-D lookup table (41×41×11×11) that is interpolated in under 1 ms. |
-| **Genetic algorithm** | `navsim/ga.py` | Decides **which areas each drone searches and in what order** (a multiple-TSP). Chromosome = a permutation of areas plus K−1 delimiters. Fitness = **expected time to find the person**, Σ P(area) × arrival time, evaluated for the whole population at once with numpy. It uses order crossover, inversion and swap mutation, tournament selection and elitism, and re-runs (warm-started) when the belief changes. |
+| **Bayesian search map** (`navsim/belief.py`) | *Where is the person probably?* | P(person) over every free cell. A look that finds nobody multiplies a cell's probability by (1 − p_detect), and p_detect falls with distance and smoke, so rooms glanced at through smoke keep part of their probability and are searched again. The same module keeps a Bayes filter for "is this door blocked?" (debris never clears; bumping into it is certain) and a Kalman estimate of smoke. |
+| **Genetic algorithm** (`navsim/ga.py`) | *Which drone searches which rooms, in what order?* | Chromosome = permutation of rooms + K−1 separators. Fitness = **expected time to find the person = Σ P(room) × arrival time at the room**. Uses order crossover, inversion and swap mutation, tournament selection and elitism, vectorised over the population, and re-runs when the beliefs change. |
+| **A\*** (`navsim/astar.py`) | *How does each drone get there, and how does it lead the person out?* | 8-connected grid, cells believed on fire or blocked are avoided, with the heuristic below. |
 
-## Mission loop (`navsim/mission.py`)
+## Heuristics
 
-Each tick:
+- **A\* heuristic:** `f(n) = g(n) + h(n)`, with `h(n) = octile distance to the goal = max(dr, dc) + (√2 − 1)·min(dr, dc)`.
+  Every step costs at least its own length, so `h` never overestimates (it is admissible) and never drops by more than a
+  step's cost (it is consistent). A\* therefore returns optimal paths. **Measured: A\* expands 67-73% fewer nodes than Dijkstra**
+  (no heuristic) on the same planning queries (fig 8).
+- **Search heuristic (GA fitness):** expected time to find = Σ P(room) × arrival time. It sends drones first to rooms that are
+  both likely and close.
 
-1. The world evolves.
-2. Every drone senses.
-3. The shared belief is updated.
-4. The fuzzy cost grid is rebuilt.
-5. Areas are reallocated by the GA when needed: periodically, when a door's believed state flips, or when a drone runs out of areas.
-6. Each drone picks a goal and moves one cell. If it runs into a blockage it didn't know about, it bumps and the belief is corrected.
+## Metrics
 
-On detection, the nearest drone flies to the person and leads them back to the entrance, planning with the person's own
-resilience. The other drones leave.
+| Metric | Definition |
+|---|---|
+| **Success** (primary) | The person reaches the exit alive. Over many missions: success rate. |
+| **Efficiency** | Best possible rescue time ÷ our rescue time (0 if the person is lost). The best possible time is that of the all-knowing rescuer starting at t = 0, so 100% is unbeatable. |
+| **POS(t)** | Bayesian probability that the search so far would have found the person. It is shown live in the app. |
+| Node saving | A\* nodes expanded vs Dijkstra on the same queries. |
 
-## Ablation (leave one out)
+## Results
 
-| id | planner | belief | allocation |
-|---|---|---|---|
-| `FULL` | Fuzzy A\* | Bayes | GA |
-| `noFuzzy` | plain A\* (distance) | Bayes | GA |
-| `noBayes` | Fuzzy A\* | last reading only + coverage search | GA |
-| `noGA` | Fuzzy A\* | Bayes | greedy P / cost |
-| `B0` | plain A\* | last reading only + coverage search | nearest area first |
+Test scenarios #100-199 (calibration used #0-39). Full tables are in `results/tables.md`.
 
-The coverage-search baseline is not a straw man. It goes to every cell of an area until 95% of the area has been
-looked at, and it re-sweeps the whole building if the person is still missing. What it lacks is any memory that
-a glance through smoke might have missed someone.
+**Final system, 10 rooms, 3 drones:** **99% success (99/100)**, **efficiency 69% [66, 72]**. The person is found in 39.6 s
+(the best possible is 22.2 s) and is outside in 65.8 s (the best possible is 44.4 s).
 
-## Run it
+**Evidence for the design** (same 100 scenarios; differences are paired, final system as reference, 95% CI):
+
+| version | success | efficiency | vs final: efficiency | vs final: time to find |
+|---|---|---|---|---|
+| **Final system** (Bayes + GA + A\*) | 99% | 69% | – | – |
+| without Bayes | 95% | 46% | **−22.9 points [−27.0, −18.7]** | **+24.0 s [13.8, 36.5]** |
+| without GA (greedy allocation) | 98% | 67% | −2.5 [−5.5, 0.5] | +2.9 s [−0.7, 6.7] |
+| neither (plain room-by-room sweep) | 89% | 44% | **−24.8 [−29.4, −20.2]** | **+24.7 s [15.5, 35.2]** |
+| + fuzzy cost (tested, rejected) | 99% | 68% | −1.1 [−4.3, 2.1] | +2.2 s [−1.3, 6.4] |
+
+- **Bayes is essential:** without it the search is about 24 s slower and efficiency drops by 23 points.
+- **The GA is better than greedy allocation:** on its own objective it wins in 85-100% of allocation problems, by 10-12%. Across
+  all 750 scaling missions it raises efficiency by **+2.0 points [+0.9, +3.2]**, and it finds the person faster in 13 of the 15
+  building/drone combinations. In the single 10-room test above, the difference alone isn't significant.
+- **Fuzzy logic was tried and left out.** A Mamdani fuzzy cell cost (4 inputs, 20 rules; `navsim/fuzzy.py`, fig 2) was built
+  and tested: as a path cost, under heavy smoke (300 s pre-burn), as a "when to leave a room" rule, and with drones that
+  overheat. None of these gave a measurable gain on winnable scenarios, so the final system doesn't use it.
+- **Scaling (fig 6):** in 10 rooms, going from 1 to 3 drones cuts the time to find from 87 s to 40 s. More drones keep helping, with
+  diminishing returns.
+- **Real time (fig 7):** averaged over missions, the 95th-percentile decision time per 1 s tick is at most 195 ms (16 rooms,
+  6 drones). The worst single mission's 95th percentile was 452 ms, still inside the 1 s budget.
+
+| Figure | Shows |
+|---|---|
+| `figs/fig1_mission.png` | one mission: entry, find, rescue |
+| `figs/fig2_fuzzy.png` | the fuzzy cost that was tested and rejected |
+| `figs/fig3_bayes.png` | the Bayesian P(person) map draining as the drones search |
+| `figs/fig4_ablation.png` | evidence for the design (table above) |
+| `figs/fig5_ga.png` | GA convergence; GA vs greedy vs random allocation |
+| `figs/fig6_scaling.png` | 1-6 drones in 6, 10 and 16 rooms |
+| `figs/fig7_realtime.png` | decision time per tick against the 1 s budget |
+| `figs/fig8_heuristic.png` | A\* nodes expanded vs Dijkstra |
+
+## Presentation app
+
+```
+.venv\Scripts\python demo.py              (add --fullscreen for full screen)
+```
+
+- **Left:** *Reality* (smoke and fire, blocked doors, the trapped person) and *What the drones believe* (the probability map,
+  and each drone's GA plan as outlined rooms with their visiting order, e.g. D2·1 = drone 2's first room).
+- **Middle, success metrics:** live charts of search progress POS(t) and the person's health. At the end there is a **report card**
+  (rescued alive or not, time to find and to rescue next to the best possible, efficiency). Also a **heuristics** panel (the A\*
+  formula and its measured node saving, and the GA fitness) and an event feed.
+- **Right:** scenario ◀ ▶ and Random, Rooms − + (4-20), Drones − + (1-8), Start/Pause, Step, Reset, Speed, view toggles, and
+  **Run 20 missions**, a benchmark that reports success rate and mean efficiency and saves `results/benchmark.csv`.
+- **Keys:** space start/pause · → step · r reset · n random scenario · f full screen.
+
+## Run and test
 
 ```
 py -3.11 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python demo.py                         # the presentation app (add --fullscreen for full screen)
-.venv\Scripts\python selftest.py                     # 13 sanity checks
-.venv\Scripts\python experiments.py --jobs 8         # E1-E3 -> results/*.csv (about 10 min on 8 cores)
-.venv\Scripts\python figures.py                      # figs/*.png + results/tables.md
-.venv\Scripts\python demo.py --seed 3 --save figs/demo_seed3.gif    # record a run
+.venv\Scripts\python selftest.py                 # 15 checks: A*, heuristic, Bayes, GA, oracle, episodes
+.venv\Scripts\python tests_ui.py                 # clicks every control of the app headless, checks frame time
+.venv\Scripts\python experiments.py --jobs 8     # results/*.csv (about 15 min on 8 cores)
+.venv\Scripts\python figures.py                  # figs/*.png and results/tables.md
+.venv\Scripts\python demo.py --scenario 3 --save figs/demo_seed3.gif   # record a mission
 ```
-
-**The presentation app** (`demo.py`) is a dark "mission control" window:
-- **Top:** a phase indicator (searching → person found → escorting out → rescued / lost) and live tiles for time,
-  person health, drones inside, GA re-plans and decision time per tick.
-- **Middle:** *Reality* shows the smoke and fire, the true blockages and the trapped person.
-- **Bottom:** *What the drones believe* shows the Bayesian probability map, the GA route of each drone (dashed) and its
-  A\* path (solid).
-- **Right-hand panel:**
-  - **Rooms** (4-20) and **Drones** (1-8) sliders.
-  - **Seed** box and **New scenario** button.
-  - **Method** buttons to rerun the same fire without fuzzy, Bayes or GA.
-  - **Start/Pause**, **Step**, **Stop/reset** and a **Speed** slider.
-  - Toggles to hide the trapped person (for suspense) or the routes.
-  - A live **event feed**: fire spreading, blocked doors found, GA re-plans, person found, rescued.
-- **Keys:** space start/pause · → step · r reset · n new scenario · f full screen.
 
 ## Files
 
 ```
-demo.py              the presentation app (and GIF recorder)
-navsim/config.py     every constant; METHODS = the ablation table
-navsim/building.py   floor plan generator: corridor, N rooms, doors, furniture, one entrance/exit, search areas
-navsim/world.py      ground truth: fire spread, smoke diffusion, debris, person health
-navsim/sensor.py     line-of-sight sensor: noisy blockage/smoke readings, distance- and smoke-dependent detection
-navsim/belief.py     Bayesian belief (search map, log-odds, Kalman) and the raw-reading baseline
-navsim/fuzzy.py      Mamdani FIS from scratch + compiled lookup table + cost grid
-navsim/astar.py      8-connected A* (multi-goal) and Dijkstra
-navsim/ga.py         GA allocation, greedy baselines, vectorised fitness
+demo.py              presentation app (and GIF recorder)
+navsim/scenario.py   winnable-scenario generation and the all-knowing reference rescuer
+navsim/building.py   floor plan: corridor, N rooms, doors, furniture, one entrance/exit
+navsim/world.py      ground truth: fire spread, smoke, debris, person health
+navsim/sensor.py     line-of-sight sensor with noisy readings and smoke-dependent detection
+navsim/belief.py     Bayesian search map, blockage filter, smoke estimate
+navsim/ga.py         GA allocation (and the greedy/sweep baselines)
+navsim/astar.py      A* with the octile heuristic, Dijkstra
 navsim/mission.py    the real-time loop and the drone state machine
-navsim/render.py     map drawing (light theme for figures, dark theme for the app)
+navsim/fuzzy.py      the fuzzy cost that was tested and rejected
+navsim/config.py     all constants; METHODS = final system and the evaluation variants
 ```
 
-## Results
+## Notes on method and honesty
 
-Full tables are in `results/tables.md`, figures in `figs/`. Test seeds 100-199, 10 rooms, 3 drones, 95% bootstrap CIs.
-
-| | rescued alive | time to find* | time to rescue* | civilian smoke dose during escort* |
-|---|---|---|---|---|
-| **FULL** (Fuzzy A\* + Bayes + GA) | 73% | 39 s | 66 s | 0.33 |
-| without fuzzy | 75% | 37 s | 64 s | 0.38 |
-| without Bayes | 66% | 54 s | 95 s | 1.28 |
-| without GA | 72% | 43 s | 69 s | 0.41 |
-| B0 (none of the three) | 62% | 62 s | 106 s | 0.95 |
-
-\* mean over the 59 seeds that every method rescued.
-
-Paired comparison with FULL on the same seeds (other minus FULL, 95% bootstrap CI; a CI that excludes 0 is a clear effect):
-
-| removed | only FULL rescued / only the other | McNemar p | extra time to find | extra escort smoke dose |
-|---|---|---|---|---|
-| fuzzy | 0 / 2 | 0.50 | −2.1 s [−5.9, 1.2] | **+0.115 [0.033, 0.224]** |
-| Bayes | **8 / 1** | **0.04** | **+14.2 s [5.6, 23.4]** | **+0.888 [0.098, 2.311]** |
-| GA | 2 / 1 | 1.00 | **+6.5 s [1.0, 12.2]** | **+0.222 [0.032, 0.494]** |
-| all three | **11 / 0** | **<0.01** | **+20.9 s [9.8, 33.5]** | **+0.925 [0.275, 1.785]** |
-
-What the data supports:
-- **Bayes matters most.** It is the only method that measurably saves more lives: 8 people rescued that the
-  version without Bayes loses, against 1 the other way round (p = 0.04). It also finds the person 14 s sooner. A single glance
-  through smoke can miss someone, and only the Bayesian map keeps that possibility alive and sends drones back.
-- **The GA speeds up the search.** Finds come 6.5 s sooner than with greedy allocation (CI excludes 0). On the allocation problems
-  the team faces at t = 30 s, the GA beats greedy in **92-97% of cases, by 11-13%** in expected find time (random allocation is
-  +160-180% worse). It gets within 1% of its final result in about 45 generations (10 rooms, 3 drones) to 85 (16 rooms,
-  6 drones), in 190-310 ms.
-- **Fuzzy A\* protects the civilian on the way out.** Their smoke dose during the escort is significantly lower without
-  significantly slowing the search. It doesn't change the number of rescues (0 vs 2 discordant seeds, p = 0.5).
-- **Scaling (fig 6):** in 10 rooms, going from 1 to 3 drones cuts the time to find from 84 s to 43 s and raises rescues from
-  56% to 68%. More drones keep helping, with diminishing returns.
-- **Real time (fig 7):** the 95th-percentile decision time per tick stays under 300 ms even with 16 rooms and 6 drones,
-  well inside the 1 s tick.
-- 25 of the 100 scenarios are lost by every method. In those, the fire cuts the person off or overcomes them before anyone can
-  reach them; with a single way out this happens more often than with three exits.
-
-| Figure | Shows |
-|---|---|
-| `figs/fig1_mission.png` | one mission: entry, find, rescue (seed picked by a fixed rule: the first test seed found after >= 30 s) |
-| `figs/fig2_fuzzy.png` | membership functions and the penalty surfaces for a drone vs the civilian |
-| `figs/fig3_bayes.png` | the Bayesian P(person) map draining as the drones search |
-| `figs/fig4_ablation.png` | leave-one-out ablation |
-| `figs/fig5_ga.png` | GA convergence and GA vs greedy vs random |
-| `figs/fig6_scaling.png` | 1-6 drones in 6, 10 and 16 rooms |
-| `figs/fig7_realtime.png` | decision time per tick against the 1 s budget |
-| `figs/demo_seed3.gif` | the presentation app, recorded |
-
-## Calibration and honesty notes
-
-- The fire, debris and health constants and the fuzzy rule base were tuned on **seeds 0-39**. All reported experiments
-  use **seeds 100 and up**.
-- The building was first built with three exits. It now has a single door used both to enter and to leave, and **all
-  results above come from that layout**. With three exits, Bayes was still clearly helpful, but the GA's and fuzzy's
-  end-to-end effects were not significant.
-- The first fuzzy rule base made drones avoid smoke as strongly as a civilian would. That made them detour around the
-  corridor where the person was, and it lost rescues. The rules were redesigned so that drones tolerate smoke and the civilian does
-  not.
-- A first version let the blockage belief drift back to its prior. Drones then forgot doors they knew were blocked and
-  walked into them about 11 times per mission. It was replaced by the correct absorbing transition model.
-- Simplifications: a 2-D single floor, a 0.5 m grid, perfect communication between drones, a stationary person, and a
-  smoke/heat field reduced to one hazard value per cell.
+- Constants were tuned on scenarios #0-39 only; every reported number comes from #100 and up.
+- The all-knowing rescuer is a fair best case: it may move diagonally and only needs to reach the person's side. The
+  winnable check is conservative: it starts 120 s late and moves in 4 directions only.
+- How the design got here (see the git history): three exits → one; a misleading 73% success rate (a quarter of the scenarios
+  were impossible) → winnable scenarios; fuzzy cost included → tested and removed; a blockage belief that "forgot" blocked
+  doors → the correct absorbing model; a slow, unresponsive app → step buttons and region blitting.
+- Simplifications: 2-D single floor, 0.5 m grid, perfect communication between drones, a stationary person, and one smoke/heat
+  value per cell.
