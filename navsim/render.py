@@ -13,7 +13,7 @@ WALL, FURN = "#383835", "#c3c2b7"
 # one-hue sequential ramps: smoke in orange, P(person) in blue
 SMOKE = LinearSegmentedColormap.from_list("smoke", [SURFACE, "#f7c3a8", "#eb6834", "#a8401a", "#5c1f08"])
 PROB = LinearSegmentedColormap.from_list("prob", [SURFACE, "#cde2fb", "#86b6ef", "#2a78d6", "#184f95", "#0d366b"])
-UNIT_COLORS = [PALETTE[0], PALETTE[6], PALETTE[2], PALETTE[5], PALETTE[4], PALETTE[7]]
+UNIT_COLORS = [PALETTE[0], PALETTE[6], PALETTE[2], PALETTE[5], PALETTE[4], PALETTE[7], PALETTE[3], PALETTE[1]]
 
 
 def style_axes(ax):
@@ -33,8 +33,9 @@ def _image(b, field, cmap, vmax):
     return img
 
 
-def draw_map(ax, m, layer="truth", vmax=None, routes=True, trails=True, legend=False):
-    """layer = 'truth' (smoke, true blockages, the person) or 'belief' (P(person) or coverage, believed blockages)."""
+def draw_map(ax, m, layer="truth", vmax=None, routes=True, trails=True, legend=False, show_person=True):
+    """layer = 'truth' (smoke, true blockages, the person) or 'belief' (P(person) or coverage, believed blockages).
+    show_person=False hides the person on the truth layer until a drone has found them."""
     b, w, bel = m.b, m.world, m.belief
     ax.clear()
     ax.set_axis_off()
@@ -72,15 +73,15 @@ def draw_map(ax, m, layer="truth", vmax=None, routes=True, trails=True, legend=F
             ax.scatter([u.pos[1]], [u.pos[0]], s=110, c=col, edgecolors="white", lw=1.5, zorder=6)
             ax.text(u.pos[1], u.pos[0], str(u.id + 1), color="white", fontsize=7, fontweight="bold",
                     ha="center", va="center", zorder=7)
-    if layer == "truth" or m.t_find is not None:
+    if (layer == "truth" and show_person) or m.t_find is not None:
         pr, pc = w.person
         ax.scatter([pc], [pr], marker="*", s=220, c="#e34948" if w.health > 0 else INK, edgecolors="white",
                    lw=1, zorder=8)
     if legend:
         from matplotlib.lines import Line2D
-        h = [Line2D([], [], marker="s", ls="", color=GOOD, label="exit"),
+        h = [Line2D([], [], marker="s", ls="", color=GOOD, label="entrance / exit"),
              Line2D([], [], marker="x", ls="", color=CRITICAL, label="blocked" if layer == "truth" else "believed blocked"),
-             Line2D([], [], marker="o", ls="", color=PALETTE[0], label="unit"),
+             Line2D([], [], marker="o", ls="", color=PALETTE[0], label="drone"),
              Line2D([], [], marker="*", ls="", color="#e34948", markersize=10, label="person")]
         ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=8,
                   labelcolor=INK2)
