@@ -72,11 +72,13 @@ class Config:
     cover_frac: float = 0.95   # coverage baseline: area cleared when this share of its cells was looked at
 
 
-# Leave-one-out ablation. Without Bayes the GA still runs, on the uncovered share of each area instead of P(person).
+# The final system is FULL: Bayesian search map + GA allocation + A* (octile heuristic). The other entries exist
+# only for the evaluation that justifies it: each one removes a component, and "withFuzzy" adds the fuzzy cost
+# that was built, tested and left out because it gave no measurable gain.
 METHODS = {
-    "FULL":    dict(fuzzy=True,  bayes=True,  alloc="ga"),
-    "noFuzzy": dict(fuzzy=False, bayes=True,  alloc="ga"),       # plain A* (distance only)
-    "noBayes": dict(fuzzy=True,  bayes=False, alloc="ga"),       # last reading + coverage search
-    "noGA":    dict(fuzzy=True,  bayes=True,  alloc="greedy"),   # greedy P/cost allocation
-    "B0":      dict(fuzzy=False, bayes=False, alloc="sweep"),    # none of the three
+    "FULL":      dict(fuzzy=False, bayes=True,  alloc="ga"),
+    "withFuzzy": dict(fuzzy=True,  bayes=True,  alloc="ga"),       # + Mamdani fuzzy cell cost (tested, rejected)
+    "noBayes":   dict(fuzzy=False, bayes=False, alloc="ga"),       # last reading only + coverage search
+    "noGA":      dict(fuzzy=False, bayes=True,  alloc="greedy"),   # greedy P/cost allocation
+    "B0":        dict(fuzzy=False, bayes=False, alloc="sweep"),    # none: coverage search, nearest room first
 }

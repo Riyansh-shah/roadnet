@@ -9,8 +9,8 @@ from matplotlib.colors import LinearSegmentedColormap, to_rgba
 # categorical slots in fixed order; methods keep their colour in every figure
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 PALETTE_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
-METHOD_COLOR = {"FULL": PALETTE[0], "noGA": PALETTE[1], "noBayes": PALETTE[2], "noFuzzy": PALETTE[3], "B0": PALETTE[4]}
-METHOD_ORDER = ["FULL", "noFuzzy", "noBayes", "noGA", "B0"]
+METHOD_COLOR = {"FULL": PALETTE[0], "noGA": PALETTE[1], "noBayes": PALETTE[2], "withFuzzy": PALETTE[3], "B0": PALETTE[4]}
+METHOD_ORDER = ["FULL", "withFuzzy", "noBayes", "noGA", "B0"]
 INK, INK2, MUTED, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7", "#fcfcfb"
 GOOD, CRITICAL = "#0ca30c", "#d03b3b"
 

@@ -21,8 +21,8 @@ FIGS, RES = "figs", "results"
 plt.rcParams.update({"font.family": "sans-serif", "font.size": 9, "axes.titlesize": 9, "axes.titleweight": "bold",
                      "axes.labelcolor": INK2, "axes.titlecolor": INK, "text.color": INK, "figure.dpi": 100,
                      "savefig.dpi": 200, "savefig.bbox": "tight"})
-LABEL = {"FULL": "Full system", "noFuzzy": "without fuzzy A*", "noBayes": "without Bayes",
-         "noGA": "without GA", "B0": "none of the three"}
+LABEL = {"FULL": "Final system", "withFuzzy": "+ fuzzy cost (rejected)", "noBayes": "without Bayes",
+         "noGA": "without GA (greedy)", "B0": "neither (sweep)"}
 rng = np.random.default_rng(0)
 
 
@@ -200,7 +200,7 @@ def fig_ablation(e1):
         ax.xaxis.grid(True, color=GRID, lw=0.6)
         ax.margins(x=0.25)
     axes[0].set_yticks(y, [LABEL[m] for m in methods])
-    fig.suptitle(f"Why each component is needed: the full system vs simpler versions (100 winnable scenarios, "
+    fig.suptitle(f"Evidence for the design: final system vs removing Bayes or GA, and vs adding a fuzzy cost (100 winnable scenarios, "
                  f"10 rooms, 3 drones). * = over the {len(ok_all)} scenarios every version rescued; bars = mean, "
                  f"whiskers = 95% CI", x=0.02, ha="left", fontsize=9.5, fontweight="bold")
     fig.tight_layout()
@@ -326,17 +326,17 @@ def fig_heuristic(e2):
     rows = heuristic_rows(e2)
     fig, ax = plt.subplots(figsize=(6, 2.8))
     w = 0.26
-    for j, (lab, col, idx) in enumerate((("no heuristic (Dijkstra)", MUTED, None), ("h = octile", PALETTE[1], 2),
-                                         ("h = c_min x octile (ours)", PALETTE[0], 1))):
+    w = 0.36
+    for j, (lab, col, idx) in enumerate((("no heuristic (Dijkstra)", MUTED, None), ("A*, h = octile distance", PALETTE[0], 1))):
         for i, r in enumerate(rows):
             v = 100.0 if idx is None else r[idx]
-            ax.bar(i + (j - 1) * w, v, width=w - 0.03, color=col, label=lab if i == 0 else None)
-            ax.text(i + (j - 1) * w, v, f"{v:.0f}", ha="center", va="bottom", fontsize=8, color=INK2)
+            ax.bar(i + (j - 0.5) * w, v, width=w - 0.04, color=col, label=lab if i == 0 else None)
+            ax.text(i + (j - 0.5) * w, v, f"{v:.0f}%", ha="center", va="bottom", fontsize=8, color=INK2)
     ax.set_xticks(range(len(rows)), [f"{r[0]} rooms" for r in rows])
     ax.set_ylabel("nodes expanded (% of Dijkstra)")
     ax.set_ylim(0, 125)
-    ax.set_title("A* heuristic: same optimal paths, far fewer expanded nodes", loc="left")
-    ax.legend(frameon=False, fontsize=8, ncol=3, loc="upper left")
+    ax.set_title("A* heuristic: same optimal paths, far fewer expanded nodes (final system)", loc="left")
+    ax.legend(frameon=False, fontsize=8, ncol=2, loc="upper left")
     style_axes(ax)
     fig.tight_layout()
     save(fig, "fig8_heuristic.png")
@@ -358,14 +358,14 @@ def tables(e1, ok_all, e2, e3):
          "Values are means with [95% bootstrap CI].\n"]
     f = e1["method"] == "FULL"
     ok = f & (e1["success"] == 1)
-    L += ["## Headline: the full system (10 rooms, 3 drones, scenarios #100-199)\n",
+    L += ["## Headline: the final system (10 rooms, 3 drones, scenarios #100-199)\n",
           "| success | efficiency | time to find | best possible find | time to rescue | best possible rescue | "
           "person health at exit |", "|---|---|---|---|---|---|---|",
           f"| **{100 * e1['success'][f].mean():.0f}%** ({int(e1['success'][f].sum())}/{int(f.sum())}) | "
           f"**{fmt(*boot_ci(100 * e1['efficiency'][f]), d=0)} %** | {fmt(*boot_ci(e1['t_find'][ok]))} s | "
           f"{e1['oracle_find'][f].mean():.1f} s | {fmt(*boot_ci(e1['t_rescue'][ok]))} s | "
           f"{e1['oracle_rescue'][f].mean():.1f} s | {e1['health'][ok].mean():.2f} |"]
-    L += ["", "## Why each component is needed (same 100 scenarios)\n",
+    L += ["", "## Evidence for the design (same 100 scenarios)\n",
           f"Times and escort smoke dose are over the {len(ok_all)} scenarios every version rescued.\n",
           "| version | success % | efficiency % | time to find (s) | time to rescue (s) | escort smoke dose |",
           "|---|---|---|---|---|---|"]
@@ -375,9 +375,9 @@ def tables(e1, ok_all, e2, e3):
         L.append(f"| {LABEL[m]} | {100 * e1['success'][sel].mean():.0f} | "
                  f"{fmt(*boot_ci(100 * e1['efficiency'][sel]), d=0)} | {fmt(*boot_ci(e1['t_find'][com]))} | "
                  f"{fmt(*boot_ci(e1['t_rescue'][com]))} | {fmt(*boot_ci(e1['escort_dose'][com]), d=3)} |")
-    L += ["", "Paired with the full system on the same scenarios (other minus full; a CI that excludes 0 is a clear "
+    L += ["", "Paired with the final system on the same scenarios (other minus final; a CI that excludes 0 is a clear "
           "effect; McNemar p is for the scenarios only one of the two rescued):\n",
-          "| version | only full rescued | only this rescued | McNemar p | efficiency difference (points) | "
+          "| version | only final rescued | only this rescued | McNemar p | efficiency difference (points) | "
           "extra time to find (s) | extra escort smoke dose |", "|---|---|---|---|---|---|---|"]
     full = {int(s): (ok_, ef, tf, d) for s, ok_, ef, tf, d, m in
             zip(e1["seed"], e1["success"], e1["efficiency"], e1["t_find"], e1["escort_dose"], e1["method"])
@@ -420,12 +420,12 @@ def tables(e1, ok_all, e2, e3):
         L.append(f"| {n} | {k} | {sel.sum()} | {100 * (g < gr - 1e-9).mean():.0f}% | "
                  f"{fmt(*boot_ci(100 * (gr - g) / gr))} | {100 * ((rd - gr) / gr).mean():+.0f} | "
                  f"{e3['ga_ms'][sel].mean():.0f} | {e3['greedy_ms'][sel].mean():.1f} |")
-    L += ["", "## A* heuristic (same sampled queries, full system)\n",
-          "h(n) = c_min x octile distance, c_min = cheapest cell cost on the grid (admissible and consistent; "
-          "paths stay optimal).\n",
-          "| rooms | nodes with no heuristic (Dijkstra) | h = octile | h = c_min x octile |", "|---|---|---|---|"]
+    L += ["", "## A* heuristic (same sampled planning queries, final system)\n",
+          "h(n) = octile distance to the goal. Every step costs at least its length, so h never overestimates "
+          "(admissible) and A* still returns optimal paths.\n",
+          "| rooms | nodes expanded with no heuristic (Dijkstra) | nodes expanded by A* | saving |", "|---|---|---|---|"]
     for n, tight, octl, d in heuristic_rows(e2):
-        L.append(f"| {n} | {d:,} (100%) | {octl:.0f}% | **{tight:.0f}%** |")
+        L.append(f"| {n} | {d:,} | {int(d * tight / 100):,} | **{100 - tight:.0f}%** |")
     with open(os.path.join(RES, "tables.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(L) + "\n")
     print("wrote", os.path.join(RES, "tables.md"))

@@ -1,5 +1,5 @@
-"""The real-time mission loop: K units enter through one door, search with a shared belief, find the person and
-lead them back out through the entrance.
+"""The real-time mission loop: K drones enter through one door, search with a shared Bayesian belief, find the
+person and lead them back out through the entrance. Rooms are allocated to drones by a GA; paths come from A*.
 
 Each tick: the world evolves -> every unit senses -> the shared belief is updated -> the fuzzy cost grid is rebuilt
 -> areas are (re)allocated if needed -> every unit picks a goal, (re)plans with A* and moves one cell.

@@ -4,7 +4,7 @@
     python demo.py --fullscreen                      same, full screen
     python demo.py --scenario 3 --save figs/demo.gif record one mission to a GIF (no window)
 
-The system always runs the full method: Fuzzy A* paths, a Bayesian search map, and GA allocation of rooms to drones.
+The system: a Bayesian search map (where the person probably is), GA allocation of rooms to drones, and A* paths.
 Every scenario is checked to be winnable (navsim/scenario.py).
 
 Controls (right): scenario ◀ ▶ / random, rooms − +, drones − +, Start/Pause, Step, Reset, speed − +, view toggles,
@@ -231,7 +231,7 @@ class App:
 
         card(fig, mx, 0.2, mw, 0.19, "HEURISTICS")
         fig.text(mx + 0.01, 0.355, "A*:  f(n) = g(n) + h(n)", fontsize=9.5, color=TEXT, va="top")
-        fig.text(mx + 0.01, 0.335, "h(n) = c_min × octile distance to goal", fontsize=9.5, color=TEXT, va="top")
+        fig.text(mx + 0.01, 0.335, "h(n) = octile distance to the goal", fontsize=9.5, color=TEXT, va="top")
         self.heur = [fig.text(mx + 0.01, 0.305 - i * 0.02, "", fontsize=9.2, color=TEXT2, va="top")
                      for i in range(2)]
         fig.text(mx + 0.01, 0.262, "GA:  fitness = Σ P(room) × arrival time", fontsize=9.5, color=TEXT, va="top")
@@ -514,8 +514,9 @@ class App:
     def _heuristics(self, m):
         cm = c_min(m.cost) if m.cost is not None else 0.0
         n = m.nodes
-        self.heur[0].set_text(f"c_min = {cm:.1f} now (cheapest cell) → admissible")
-        self.heur[1].set_text(f"{100 * (1 - n['tight'] / n['none']):.0f} % fewer nodes than no heuristic"
+        self.heur[0].set_text("never overestimates (each step costs ≥ its length)" if cm <= 1.0 + 1e-9 else
+                              f"scaled by the cheapest step cost {cm:.1f}: still admissible")
+        self.heur[1].set_text(f"{100 * (1 - n['tight'] / n['none']):.0f} % fewer nodes than Dijkstra (h = 0)"
                               if n["none"] else "node savings appear once drones plan")
         self.heur[2].set_text(f"= expected time to find  ·  {m.ga_calls} re-plans")
 
