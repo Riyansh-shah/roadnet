@@ -3,6 +3,7 @@
     python figures.py
 """
 import csv
+import math
 import os
 
 import matplotlib
@@ -43,6 +44,12 @@ def boot_ci(x, n=2000):
         return np.nan, np.nan, np.nan
     means = rng.choice(x, (n, len(x))).mean(axis=1)
     return x.mean(), *np.percentile(means, [2.5, 97.5])
+
+
+def mcnemar_p(b, c):
+    """Exact two-sided McNemar test on the discordant pair counts."""
+    n, k = b + c, min(b, c)
+    return 1.0 if n == 0 else min(1.0, 2 * sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n)
 
 
 def save(fig, name):
@@ -105,7 +112,7 @@ def fig_bayes(seed):
     vmax = max(v.belief.pp.max() for v in views)
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 8.4))
     names = ["prior: uniform over every free cell", "misses drain P(person) from searched areas",
-             "one step before the find: the probability is concentrated"]
+             "one step before the find: mass is left only where nobody could look (the burning room, corners)"]
     for ax, v, t, nm in zip(axes, views, times, names):
         draw_map(ax, v, "belief", vmax=vmax, routes=False)
         ax.set_title(f"t = {t} s: {nm}", loc="left", fontweight="normal", color=INK2)
@@ -202,7 +209,7 @@ def fig_ablation(e1):
 # ---------------------------------------------------------------- 5: GA
 def fig_ga(e3, curve):
     fig, (a, b) = plt.subplots(1, 2, figsize=(10, 3.2), gridspec_kw={"width_ratios": [1.4, 1]})
-    for (n, k), col in zip(((10, 3), (16, 6)), (PALETTE[0], PALETTE[6])):
+    for (n, k), col, va in zip(((10, 3), (16, 6)), (PALETTE[0], PALETTE[6]), ("top", "bottom")):
         sel = (curve["n_rooms"] == n) & (curve["k_units"] == k)
         G = int(curve["gen"][sel].max())
         mat = np.full((len(np.unique(curve["seed"][sel])), G + 1), np.nan)
@@ -215,7 +222,7 @@ def fig_ga(e3, curve):
         lo, hi = np.percentile(mat, [25, 75], axis=0)
         a.fill_between(np.arange(G + 1), lo, hi, color=col, alpha=0.15, lw=0)
         a.plot(mu, color=col, lw=2)
-        a.text(G, mu[-1], f"  N={n}, K={k}", color=INK2, va="center", fontsize=8)
+        a.text(G, mu[-1], f"  N={n}, K={k}", color=INK2, va=va, fontsize=8)
     a.axhline(1, color=MUTED, lw=1, ls=(0, (4, 3)))
     a.text(0, 1.005, "greedy", color=MUTED, fontsize=8, va="bottom")
     a.set_xlabel("generation")
@@ -236,8 +243,7 @@ def fig_ga(e3, curve):
     b.set_ylabel("expected find time / greedy")
     b.set_title("Allocation objective at t = 30 s (lower is better)", loc="left")
     b.legend(frameon=False, fontsize=8, ncol=3, loc="upper left")
-    b.set_ylim(0, None)
-    b.margins(y=0.15)
+    b.set_ylim(0, 1.3 * b.get_ylim()[1])
     style_axes(b)
     fig.tight_layout()
     save(fig, "fig5_ga.png")
@@ -248,29 +254,36 @@ def fig_scaling(e2):
     Ns, Ks = (6, 10, 16), (1, 2, 3, 4, 6)
     fig, axes = plt.subplots(2, 3, figsize=(10, 5), sharex=True)
     for c, n in enumerate(Ns):
+        ends = {}
         for m in ("FULL", "noGA"):
             sr, tf = [], []
             for k in Ks:
                 sel = (e2["n_rooms"] == n) & (e2["k_units"] == k) & (e2["method"] == m)
                 sr.append(100 * e2["success"][sel].mean())
-                tf.append(np.nanmean(e2["t_find"][sel]))
+                tf.append(np.nanmean(e2["t_find"][sel & (e2["success"] == 1)]))
             for r, vals in ((0, sr), (1, tf)):
                 ax = axes[r, c]
                 ax.plot(Ks, vals, color=METHOD_COLOR[m], lw=2, marker="o", ms=4,
                         label=LABEL[m] if (r, c) == (0, 0) else None)
-                if c == len(Ns) - 1:
-                    ax.text(Ks[-1], vals[-1], "  " + ("FULL" if m == "FULL" else "noGA"), color=INK2,
-                            fontsize=8, va="center")
+                ends.setdefault(r, {})[m] = vals[-1]
+        if c == len(Ns) - 1:                      # direct labels, the higher line labelled above
+            for r, e in ends.items():
+                hi = max(e, key=e.get)
+                for m, v in e.items():
+                    axes[r, c].text(Ks[-1], v, "  " + m, color=INK2, fontsize=8,
+                                    va="bottom" if m == hi else "top")
         axes[0, c].set_title(f"{n} rooms", loc="left")
         axes[1, c].set_xlabel("units K")
     axes[0, 0].set_ylabel("rescued alive (%)")
-    axes[1, 0].set_ylabel("mean time to find (s)")
+    axes[1, 0].set_ylabel("time to find (s), rescued runs")
     for ax in axes.ravel():
         style_axes(ax)
         ax.set_xticks(Ks)
         ax.margins(x=0.15)
+    for ax in axes[0]:
+        ax.set_ylim(50, 100)                      # one honest scale: 1 seed = 2 points
     axes[0, 0].legend(frameon=False, fontsize=8, loc="lower right")
-    fig.suptitle("More units help, with diminishing returns through the single entrance (50 seeds per point)",
+    fig.suptitle("More units find the person sooner, with diminishing returns (50 seeds per point)",
                  x=0.02, ha="left", fontsize=10, fontweight="bold")
     fig.tight_layout()
     save(fig, "fig6_scaling.png")
@@ -317,30 +330,37 @@ def tables(e1, ok_all, e2, e3):
                  f"{fmt(*boot_ci(e1['escort_dose'][com]), d=3)} | {e1['bumps'][sel].mean():.2f} | "
                  f"{e1['unit_exposure'][sel].mean():.2f} | {e1['tick_ms_mean'][sel].mean():.1f} | "
                  f"{e1['tick_ms_p95'][sel].mean():.1f} |")
-    L += ["", "Paired comparison with FULL (same seeds): seeds where only one of the two rescued the person, and the "
-          "mean difference in time to find on seeds both rescued (other minus FULL, 95% bootstrap CI).\n",
-          "| method | only FULL rescued | only this rescued | extra time to find (s) |", "|---|---|---|---|"]
-    full = {int(s): (ok, tf) for s, ok, tf, m in zip(e1["seed"], e1["success"], e1["t_find"], e1["method"]) if m == "FULL"}
+    L += ["", "Paired comparison with FULL on the same seeds: seeds where only one of the two rescued the person "
+          "(exact McNemar p), and mean differences on seeds both rescued (other minus FULL, 95% bootstrap CI; "
+          "a CI that excludes 0 is a clear effect).\n",
+          "| method | only FULL rescued | only this rescued | McNemar p | extra time to find (s) | extra escort smoke dose |",
+          "|---|---|---|---|---|---|"]
+    full = {int(s): (ok, tf, d) for s, ok, tf, d, m in
+            zip(e1["seed"], e1["success"], e1["t_find"], e1["escort_dose"], e1["method"]) if m == "FULL"}
     for m in METHOD_ORDER[1:]:
         only_f = only_m = 0
-        diffs = []
-        for s, ok, tf, mm in zip(e1["seed"], e1["success"], e1["t_find"], e1["method"]):
+        dt, dd = [], []
+        for s, ok, tf, d, mm in zip(e1["seed"], e1["success"], e1["t_find"], e1["escort_dose"], e1["method"]):
             if mm != m:
                 continue
-            fok, ftf = full[int(s)]
-            only_f += fok and not ok
-            only_m += ok and not fok
+            fok, ftf, fd = full[int(s)]
+            only_f += int(fok and not ok)
+            only_m += int(ok and not fok)
             if ok and fok:
-                diffs.append(tf - ftf)
-        L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {fmt(*boot_ci(diffs))} |")
-    L += ["", "## E2: scaling (seeds 100-149)\n", "| rooms | units | method | rescued % | time to find (s) | "
-          "time to rescue (s) | ms/tick p95 |", "|---|---|---|---|---|---|---|"]
+                dt.append(tf - ftf)
+                dd.append(d - fd)
+        L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {mcnemar_p(only_f, only_m):.2f} | {fmt(*boot_ci(dt))} | "
+                 f"{fmt(*boot_ci(dd), d=3)} |")
+    L += ["", "## E2: scaling (seeds 100-149)\n", "Times are means over the rescued runs.\n",
+          "| rooms | units | method | rescued % | time to find (s) | time to rescue (s) | ms/tick p95 |",
+          "|---|---|---|---|---|---|---|"]
     for n in (6, 10, 16):
         for k in (1, 2, 3, 4, 6):
             for m in ("FULL", "noGA"):
                 sel = (e2["n_rooms"] == n) & (e2["k_units"] == k) & (e2["method"] == m)
-                L.append(f"| {n} | {k} | {m} | {100 * e2['success'][sel].mean():.0f} | {np.nanmean(e2['t_find'][sel]):.1f} | "
-                         f"{np.nanmean(e2['t_rescue'][sel]):.1f} | {e2['tick_ms_p95'][sel].mean():.1f} |")
+                ok = sel & (e2["success"] == 1)
+                L.append(f"| {n} | {k} | {m} | {100 * e2['success'][sel].mean():.0f} | {np.nanmean(e2['t_find'][ok]):.1f} | "
+                         f"{np.nanmean(e2['t_rescue'][ok]):.1f} | {e2['tick_ms_p95'][sel].mean():.1f} |")
     L += ["", "## E3: allocation objective at t = 30 s (expected find time; lower is better)\n",
           "| rooms | units | problems | GA better than greedy | GA gain over greedy % | random vs greedy % | "
           "GA ms | greedy ms |", "|---|---|---|---|---|---|---|---|"]

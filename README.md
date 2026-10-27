@@ -70,7 +70,44 @@ navsim/render.py     map drawing shared by the demo and the figures
 
 ## Results
 
-RESULTS_PLACEHOLDER
+Full tables are in `results/tables.md`, figures in `figs/`. Test seeds 100-199, 10 rooms, 3 units, 95% bootstrap CIs.
+
+| | rescued alive | time to find* | time to rescue* | civilian smoke dose during escort* |
+|---|---|---|---|---|
+| **FULL** (Fuzzy A\* + Bayes + GA) | 80% | 41 s | 55 s | 0.077 |
+| without fuzzy | 83% | 41 s | 55 s | 0.133 |
+| without Bayes | 75% | 62 s | 104 s | 0.589 |
+| without GA | 80% | 48 s | 62 s | 0.069 |
+| B0 (none of the three) | 73% | 62 s | 102 s | 0.548 |
+
+\* mean over the 67 seeds that every method rescued (paired comparison).
+
+What the data supports:
+- **Bayes is the method that matters most.** Removing it makes the team find the person **22 s later
+  (95% CI 10-36 s)**, and the escort smoke dose is about 8x higher. A single glance through smoke can miss the person, and only
+  the Bayesian map keeps that possibility alive and sends units back.
+- **The GA optimises its objective clearly.** On the allocation problems the team faces at t = 30 s, it beats greedy
+  allocation in **95-96% of cases, by 11-14%** in expected find time (random allocation is +160-180% worse). It converges in
+  about 40 generations and takes 250-400 ms. In whole missions this gives **4 s faster finds, but the CI (-1.6 to 10.6 s)
+  includes zero**, so the end-to-end gain isn't significant at 100 seeds.
+- **Fuzzy A\*'s measurable effect is on the escort.** The civilian breathes **42% less smoke** while being led out
+  (0.077 vs 0.133; the paired CI just touches zero). It doesn't change how fast the person is found or how many survive
+  (1 vs 4 discordant seeds, McNemar p = 0.38).
+- **Scaling (fig 6):** going from 1 to 2-3 units roughly halves the time to find. Beyond that the returns diminish.
+- **Real time (fig 7):** the 95th-percentile decision time per tick stays under 400 ms even with 16 rooms and 6 units,
+  well inside the 1 s tick. The mean is 10-50 ms.
+- About 18% of scenarios are lost by every method. In those, the person is cut off or overcome by fire before anyone can reach them.
+
+| Figure | Shows |
+|---|---|
+| `figs/fig1_mission.png` | one mission: entry, find, rescue (seed picked by a fixed rule: the first test seed found after >= 30 s) |
+| `figs/fig2_fuzzy.png` | membership functions and the penalty surfaces for a unit vs the civilian |
+| `figs/fig3_bayes.png` | the Bayesian P(person) map draining as the units search |
+| `figs/fig4_ablation.png` | leave-one-out ablation |
+| `figs/fig5_ga.png` | GA convergence and GA vs greedy vs random |
+| `figs/fig6_scaling.png` | 1-6 units in 6, 10 and 16 rooms |
+| `figs/fig7_realtime.png` | decision time per tick against the 1 s budget |
+| `figs/demo_seed3.gif` | the live demo, recorded |
 
 ## Calibration and honesty notes
 
