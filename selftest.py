@@ -33,6 +33,20 @@ for _ in range(30):
     worst = max(worst, 0 if (math.isinf(c) and math.isinf(d)) else abs(c - d))
 check("A* cost equals Dijkstra", worst < 1e-9, f"(max diff {worst:.2e})")
 
+fewer, same = 0, True
+for _ in range(30):
+    cost = rng.uniform(2.4, 20, (15, 20))
+    cost[rng.random(cost.shape) < 0.2] = np.inf
+    free = np.argwhere(np.isfinite(cost))
+    s, g = map(tuple, free[rng.choice(len(free), 2, replace=False)])
+    st_t, st_o = {}, {}
+    _, ct = astar(cost, s, [g], "tight", st_t)
+    _, co = astar(cost, s, [g], "octile", st_o)
+    same &= (math.isinf(ct) and math.isinf(co)) or abs(ct - co) < 1e-9
+    fewer += st_t["expanded"] <= st_o["expanded"]
+check("tight heuristic c_min*octile keeps the optimal cost and expands no more nodes", same and fewer == 30,
+      f"({fewer}/30 queries)")
+
 cost = np.ones((5, 20))
 path, c = astar(cost, (2, 5), [(2, 0), (2, 19)])
 check("multi-goal A* picks the nearer exit", path[-1] == (2, 0), f"(cost {c:.1f})")
@@ -101,6 +115,16 @@ for seed in range(20):
     f_gr = routes_objective(greedy_allocate(D, P, dwell, t0, k), D, P, dwell, t0, k, np.random.default_rng(0))
     wins += f_ga <= f_gr + 1e-9
 check("GA at least as good as greedy on t = 0 problems", wins >= 16, f"({wins}/20)")
+
+lower_ok, eff_ok = True, True
+for n in range(8):
+    mi = Mission(n, "FULL")
+    er, ec = mi.b.entrance
+    pr, pc = mi.world.person
+    lower_ok &= mi.oracle_rescue >= 2 * (max(abs(er - pr), abs(ec - pc)) - 1) - 1
+    res = mi.run()
+    eff_ok &= res["outcome"] != "rescued" or res["t_rescue"] >= mi.oracle_rescue
+check("oracle rescue time is physically possible and never beaten by the drones", lower_ok and eff_ok)
 
 r = Mission(0, "FULL").run()
 check("an episode runs end to end", r["outcome"] in ("rescued", "casualty", "timeout"), f"({r['outcome']}, t = {r['ticks']})")

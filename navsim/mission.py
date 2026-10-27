@@ -58,6 +58,8 @@ class Mission:
         self.sites[r0:r1 + 1, self.b.cut_cols] = True
         self.site_state = self.belief.p_block[self.sites] > 0.5
         self.ga_calls = self.replans = 0
+        self.nodes = dict(tight=0, octile=0, none=0)        # A* expansions on sampled queries, per heuristic
+        self.curve = []                                      # (t, search progress POS, person health) per tick
         self.escort_dose = 0.0
         self.ga_ms, self.tick_ms = [], []
         self.last_curve = None
@@ -111,6 +113,7 @@ class Mission:
 
         self.tick_ms.append(1000 * (time.perf_counter() - t_start))
         self.t += 1
+        self.curve.append((self.t, bel.search_progress() if self.t_find is None else 1.0, w.health))
         if self.outcome is None:
             if w.health <= 0:
                 self.outcome = "casualty"
@@ -284,7 +287,14 @@ class Mission:
                  or self.t - u.plan_t >= self.cfg.replan_every
                  or any(not np.isfinite(cost[c]) for c in u.path[1:]))
         if stale:
-            path, _ = astar(cost, u.pos, goals)
+            st = {}
+            path, _ = astar(cost, u.pos, goals, "tight", st)
+            if self.replans % 4 == 0:      # sample: the same query with weaker heuristics, to measure the saving
+                self.nodes["tight"] += st["expanded"]
+                for h in ("octile", "none"):
+                    s2 = {}
+                    astar(cost, u.pos, goals, h, s2)
+                    self.nodes[h] += s2["expanded"]
             self.replans += 1
             u.plan_t, u.path_goal, u.path = self.t, key, path or []
         if len(u.path) < 2:
@@ -320,6 +330,10 @@ class Mission:
             tick_ms_p95=round(float(np.percentile(self.tick_ms, 95)), 3),
             ga_ms_mean=round(float(np.mean(self.ga_ms)), 2) if self.ga_ms else nan,
             blocks=w.n_blocks, ticks=self.t,
+            oracle_find=self.oracle_find, oracle_rescue=self.oracle_rescue,
+            efficiency=round(self.oracle_rescue / self.t_rescue, 4) if self.t_rescue else 0.0,
+            astar_nodes=self.nodes["tight"], octile_nodes=self.nodes["octile"], dijkstra_nodes=self.nodes["none"],
+            attempts=self.attempts,
         )
 
 

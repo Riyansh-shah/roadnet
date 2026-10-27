@@ -38,6 +38,7 @@ class BeliefMap:
         self.var = np.full(b.shape, cfg.haz_var0)
         self.searchable = b.area_id >= 0
         self.pp_un = self.searchable / self.searchable.sum()   # unnormalised posterior (= prior x misses)
+        self._scale = 1.0                                       # undoes the rare underflow rescaling below
         self._area_idx = b.area_id[self.searchable]
 
     @property
@@ -79,6 +80,11 @@ class BeliefMap:
             s = self.pp_un.sum()
             if s < 1e-200:
                 self.pp_un /= s
+                self._scale *= s
+
+    def search_progress(self):
+        """POS: probability that the search so far would have detected the person (1 - remaining prior mass)."""
+        return 1.0 - float(self.pp_un.sum()) * self._scale
 
     def mark_blocked(self, cell):
         self.confirmed[cell] = True
@@ -129,6 +135,10 @@ class RawMap:
         """No route left: forget blocked readings outside `keep` (cells in view) and try again."""
         prior = _prior_block(self.b, self.cfg)
         self.blk[~keep] = np.minimum(self.blk, prior)[~keep]
+
+    def search_progress(self):
+        """Share of the building looked at in the current sweep."""
+        return float(self.looked[self.searchable].mean())
 
     def coverage(self):
         return np.bincount(self._area_idx, weights=self.looked[self.searchable],
