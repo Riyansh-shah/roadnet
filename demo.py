@@ -9,6 +9,7 @@ Reset, speed, and view toggles; below them a live event feed.
 Keys: space = start/pause, right arrow = step, r = reset, n = new scenario, f = full screen, q = quit.
 """
 import argparse
+import logging
 import random
 import sys
 
@@ -43,6 +44,7 @@ plt.rcParams["font.family"] = [f for f in ("Segoe UI", "Segoe UI Symbol", "DejaV
 for k in ("keymap.home", "keymap.forward", "keymap.back", "keymap.save"):
     plt.rcParams[k] = [x for x in plt.rcParams[k] if x not in ("r", "right", "left", "s", "n")]
 plt.rcParams["toolbar"] = "None"
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)   # symbol font has no bold weight; harmless
 
 
 def card(fig, x, y, w, h, title=None):
