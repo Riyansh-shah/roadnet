@@ -200,9 +200,9 @@ def fig_ablation(e1):
         ax.xaxis.grid(True, color=GRID, lw=0.6)
         ax.margins(x=0.25)
     axes[0].set_yticks(y, [LABEL[m] for m in methods])
-    fig.suptitle(f"Evidence for the design: final system vs removing Bayes or GA, and vs adding a fuzzy cost (100 winnable scenarios, "
-                 f"10 rooms, 3 drones). * = over the {len(ok_all)} scenarios every version rescued; bars = mean, "
-                 f"whiskers = 95% CI", x=0.02, ha="left", fontsize=9.5, fontweight="bold")
+    fig.suptitle(f"Evidence for the design: final system vs removing Bayes or GA, and vs adding a fuzzy cost\n"
+                 f"100 winnable scenarios, 10 rooms, 3 drones.  * = over the {len(ok_all)} scenarios every version "
+                 f"rescued.  Bars = mean, whiskers = 95% CI", x=0.02, ha="left", fontsize=9.5, fontweight="bold")
     fig.tight_layout()
     save(fig, "fig4_ablation.png")
     return ok_all
