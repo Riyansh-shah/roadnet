@@ -10,7 +10,7 @@ where the person is. A short-range noisy sensor is all they have, and they decid
 
 | Method | Where | Job |
 |---|---|---|
-| **Bayesian inference** | `navsim/belief.py` | A shared **P(person) map** over every free cell. Each look that finds nobody multiplies the cell's probability by (1 − p_detect), and p_detect falls with distance and smoke (Bayesian search theory), so areas missed in smoke keep part of their probability and get searched again. Also a **binary Bayes filter (log-odds) for P(blocked)** per cell, and a **1-D Kalman filter** for smoke per cell. |
+| **Bayesian inference** | `navsim/belief.py` | A shared **P(person) map** over every free cell. Each look that finds nobody multiplies the cell's probability by (1 − p_detect), and p_detect falls with distance and smoke (Bayesian search theory), so areas missed in smoke keep part of their probability and get searched again. Also a **binary Bayes filter (log-odds) for P(blocked)** per cell. Its predict step is the world's transition model: a door can become blocked, more likely in smoke, but never clears. Bumping into a blockage is a certain observation, so it stays at P = 1. And a **1-D Kalman filter** for smoke per cell, whose variance grows while a cell goes unseen. |
 | **Fuzzy A\*** | `navsim/fuzzy.py`, `navsim/astar.py` | A **Mamdani FIS** (4 inputs: hazard, P(blocked), uncertainty, resilience; 20 rules; centroid defuzzification) turns the belief into a per-cell traversal cost, and **A\*** plans on it every few ticks. Protected units tolerate smoke but avoid probably-blocked doors. The escorted civilian (resilience = 0.5 × health) gets much more smoke-averse routes. For real-time use the FIS is compiled into a 4-D lookup table (41×41×11×11) that is interpolated in under 1 ms. |
 | **Genetic algorithm** | `navsim/ga.py` | Decides **which areas each unit searches and in what order** (a multiple-TSP). Chromosome = a permutation of areas plus K−1 delimiters. Fitness = **expected time to find the person**, Σ P(area) × arrival time, evaluated for the whole population at once with numpy. It uses order crossover, inversion and swap mutation, tournament selection and elitism, and re-runs (warm-started) when the belief changes. |
 
@@ -79,6 +79,9 @@ RESULTS_PLACEHOLDER
 - The first fuzzy rule base made protected units avoid smoke as strongly as a civilian would. That made them detour
   around the corridor where the person was, and it lost rescues. The rules were redesigned so that units tolerate smoke and the
   civilian does not. This is documented in the git history.
+- A first version let the blockage belief drift back to its prior. Units then forgot doors they knew were blocked and
+  walked into them about 11 times per mission. It was replaced by the correct absorbing transition model; all
+  results below come from the corrected version.
 - Some scenarios can't be won by any method: the person is cut off by fire on every route. They count as failures
   for every method alike.
 - Simplifications: a 2-D single floor, a 0.5 m grid, perfect communication between units, a stationary person, and a
