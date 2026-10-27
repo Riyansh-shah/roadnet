@@ -21,8 +21,8 @@ FIGS, RES = "figs", "results"
 plt.rcParams.update({"font.family": "sans-serif", "font.size": 9, "axes.titlesize": 9, "axes.titleweight": "bold",
                      "axes.labelcolor": INK2, "axes.titlecolor": INK, "text.color": INK, "figure.dpi": 100,
                      "savefig.dpi": 200, "savefig.bbox": "tight"})
-LABEL = {"FULL": "FULL (all three)", "noFuzzy": "without fuzzy", "noBayes": "without Bayes",
-         "noGA": "without GA", "B0": "B0 (none)"}
+LABEL = {"FULL": "Full system", "noFuzzy": "without fuzzy A*", "noBayes": "without Bayes",
+         "noGA": "without GA", "B0": "none of the three"}
 rng = np.random.default_rng(0)
 
 
@@ -175,9 +175,10 @@ def fig_ablation(e1):
     seeds = np.unique(e1["seed"])
     ok_all = [s for s in seeds if all(e1["success"][(e1["seed"] == s) & (e1["method"] == m)][0] for m in methods)]
     panels = [("rescued alive (%)", lambda m, sel: (100 * e1["success"][sel].mean(), None)),
-              ("time to find (s)*", "t_find"), ("time to rescue (s)*", "t_rescue"),
-              ("smoke dose during escort*", "escort_dose"), ("dead-end bumps per mission", "bumps")]
-    fig, axes = plt.subplots(1, len(panels), figsize=(12, 2.8), sharey=True)
+              ("efficiency vs best possible (%)", "eff_pct"),
+              ("time to find (s)*", "t_find"), ("smoke dose during escort*", "escort_dose")]
+    e1["eff_pct"] = 100 * e1["efficiency"]
+    fig, axes = plt.subplots(1, len(panels), figsize=(11, 2.8), sharey=True)
     y = np.arange(len(methods))[::-1]
     for ax, (title, what) in zip(axes, panels):
         for yi, m in zip(y, methods):
@@ -199,8 +200,9 @@ def fig_ablation(e1):
         ax.xaxis.grid(True, color=GRID, lw=0.6)
         ax.margins(x=0.25)
     axes[0].set_yticks(y, [LABEL[m] for m in methods])
-    fig.suptitle(f"Leave-one-out ablation, 100 test seeds (10 rooms, 3 drones). * = mean with 95% CI over the "
-                 f"{len(ok_all)} seeds every method rescued", x=0.02, ha="left", fontsize=10, fontweight="bold")
+    fig.suptitle(f"Why each component is needed: the full system vs simpler versions (100 winnable scenarios, "
+                 f"10 rooms, 3 drones). * = over the {len(ok_all)} scenarios every version rescued; bars = mean, "
+                 f"whiskers = 95% CI", x=0.02, ha="left", fontsize=9.5, fontweight="bold")
     fig.tight_layout()
     save(fig, "fig4_ablation.png")
     return ok_all
@@ -309,6 +311,37 @@ def fig_scaling(e2):
     save(fig, "fig7_realtime.png")
 
 
+# ---------------------------------------------------------------- 8: heuristic
+def heuristic_rows(e2):
+    """Nodes expanded on the same sampled A* queries, per building size (full system), relative to no heuristic."""
+    rows = []
+    for n in (6, 10, 16):
+        sel = (e2["n_rooms"] == n) & (e2["method"] == "FULL")
+        t, o, d = (e2[k][sel].sum() for k in ("astar_nodes", "octile_nodes", "dijkstra_nodes"))
+        rows.append((n, 100 * t / d, 100 * o / d, int(d)))
+    return rows
+
+
+def fig_heuristic(e2):
+    rows = heuristic_rows(e2)
+    fig, ax = plt.subplots(figsize=(6, 2.8))
+    w = 0.26
+    for j, (lab, col, idx) in enumerate((("no heuristic (Dijkstra)", MUTED, None), ("h = octile", PALETTE[1], 2),
+                                         ("h = c_min x octile (ours)", PALETTE[0], 1))):
+        for i, r in enumerate(rows):
+            v = 100.0 if idx is None else r[idx]
+            ax.bar(i + (j - 1) * w, v, width=w - 0.03, color=col, label=lab if i == 0 else None)
+            ax.text(i + (j - 1) * w, v, f"{v:.0f}", ha="center", va="bottom", fontsize=8, color=INK2)
+    ax.set_xticks(range(len(rows)), [f"{r[0]} rooms" for r in rows])
+    ax.set_ylabel("nodes expanded (% of Dijkstra)")
+    ax.set_ylim(0, 125)
+    ax.set_title("A* heuristic: same optimal paths, far fewer expanded nodes", loc="left")
+    ax.legend(frameon=False, fontsize=8, ncol=3, loc="upper left")
+    style_axes(ax)
+    fig.tight_layout()
+    save(fig, "fig8_heuristic.png")
+
+
 # ---------------------------------------------------------------- tables
 def fmt(x, lo=None, hi=None, d=1):
     if np.isnan(x):
@@ -317,61 +350,84 @@ def fmt(x, lo=None, hi=None, d=1):
 
 
 def tables(e1, ok_all, e2, e3):
-    L = ["# Results\n", "All experiments use test seeds 100+ (calibration used seeds 0-39).\n"]
-    L += ["## E1: leave-one-out ablation (10 rooms, 3 drones, seeds 100-199)\n",
-          f"Times and escort dose: mean [95% bootstrap CI] over the {len(ok_all)} seeds every method rescued.\n",
-          "| method | rescued % | casualty % | time to find (s) | time to rescue (s) | escort smoke dose | bumps | "
-          "drone smoke exposure | ms/tick mean | ms/tick p95 |", "|---|---|---|---|---|---|---|---|---|---|"]
+    L = ["# Results\n",
+         "Every scenario is winnable: an all-knowing rescuer that starts 120 s late can still save the person "
+         "(`navsim/scenario.py`). Test scenarios are #100 and up; calibration used #0-39.\n",
+         "**Success** = the person reaches the exit alive. **Efficiency** = best possible rescue time / actual rescue "
+         "time (0 if the person is lost); the best possible time is that of an all-knowing rescuer starting at t = 0. "
+         "Values are means with [95% bootstrap CI].\n"]
+    f = e1["method"] == "FULL"
+    ok = f & (e1["success"] == 1)
+    L += ["## Headline: the full system (10 rooms, 3 drones, scenarios #100-199)\n",
+          "| success | efficiency | time to find | best possible find | time to rescue | best possible rescue | "
+          "person health at exit |", "|---|---|---|---|---|---|---|",
+          f"| **{100 * e1['success'][f].mean():.0f}%** ({int(e1['success'][f].sum())}/{int(f.sum())}) | "
+          f"**{fmt(*boot_ci(100 * e1['efficiency'][f]), d=0)} %** | {fmt(*boot_ci(e1['t_find'][ok]))} s | "
+          f"{e1['oracle_find'][f].mean():.1f} s | {fmt(*boot_ci(e1['t_rescue'][ok]))} s | "
+          f"{e1['oracle_rescue'][f].mean():.1f} s | {e1['health'][ok].mean():.2f} |"]
+    L += ["", "## Why each component is needed (same 100 scenarios)\n",
+          f"Times and escort smoke dose are over the {len(ok_all)} scenarios every version rescued.\n",
+          "| version | success % | efficiency % | time to find (s) | time to rescue (s) | escort smoke dose |",
+          "|---|---|---|---|---|---|"]
     for m in METHOD_ORDER:
         sel = e1["method"] == m
         com = sel & np.isin(e1["seed"], ok_all)
-        L.append(f"| {LABEL[m]} | {100 * e1['success'][sel].mean():.0f} | {100 * (e1['outcome'][sel] == 'casualty').mean():.0f} | "
-                 f"{fmt(*boot_ci(e1['t_find'][com]))} | {fmt(*boot_ci(e1['t_rescue'][com]))} | "
-                 f"{fmt(*boot_ci(e1['escort_dose'][com]), d=3)} | {e1['bumps'][sel].mean():.2f} | "
-                 f"{e1['unit_exposure'][sel].mean():.2f} | {e1['tick_ms_mean'][sel].mean():.1f} | "
-                 f"{e1['tick_ms_p95'][sel].mean():.1f} |")
-    L += ["", "Paired comparison with FULL on the same seeds: seeds where only one of the two rescued the person "
-          "(exact McNemar p), and mean differences on seeds both rescued (other minus FULL, 95% bootstrap CI; "
-          "a CI that excludes 0 is a clear effect).\n",
-          "| method | only FULL rescued | only this rescued | McNemar p | extra time to find (s) | extra escort smoke dose |",
-          "|---|---|---|---|---|---|"]
-    full = {int(s): (ok, tf, d) for s, ok, tf, d, m in
-            zip(e1["seed"], e1["success"], e1["t_find"], e1["escort_dose"], e1["method"]) if m == "FULL"}
+        L.append(f"| {LABEL[m]} | {100 * e1['success'][sel].mean():.0f} | "
+                 f"{fmt(*boot_ci(100 * e1['efficiency'][sel]), d=0)} | {fmt(*boot_ci(e1['t_find'][com]))} | "
+                 f"{fmt(*boot_ci(e1['t_rescue'][com]))} | {fmt(*boot_ci(e1['escort_dose'][com]), d=3)} |")
+    L += ["", "Paired with the full system on the same scenarios (other minus full; a CI that excludes 0 is a clear "
+          "effect; McNemar p is for the scenarios only one of the two rescued):\n",
+          "| version | only full rescued | only this rescued | McNemar p | efficiency difference (points) | "
+          "extra time to find (s) | extra escort smoke dose |", "|---|---|---|---|---|---|---|"]
+    full = {int(s): (ok_, ef, tf, d) for s, ok_, ef, tf, d, m in
+            zip(e1["seed"], e1["success"], e1["efficiency"], e1["t_find"], e1["escort_dose"], e1["method"])
+            if m == "FULL"}
     for m in METHOD_ORDER[1:]:
         only_f = only_m = 0
-        dt, dd = [], []
-        for s, ok, tf, d, mm in zip(e1["seed"], e1["success"], e1["t_find"], e1["escort_dose"], e1["method"]):
+        de, dt, dd = [], [], []
+        for s, ok_, ef, tf, d, mm in zip(e1["seed"], e1["success"], e1["efficiency"], e1["t_find"],
+                                         e1["escort_dose"], e1["method"]):
             if mm != m:
                 continue
-            fok, ftf, fd = full[int(s)]
-            only_f += int(fok and not ok)
-            only_m += int(ok and not fok)
-            if ok and fok:
+            fok, fef, ftf, fd = full[int(s)]
+            only_f += int(fok and not ok_)
+            only_m += int(ok_ and not fok)
+            de.append(100 * (ef - fef))
+            if ok_ and fok:
                 dt.append(tf - ftf)
                 dd.append(d - fd)
         p = mcnemar_p(only_f, only_m)
         ps = "<0.01" if p < 0.01 else f"{p:.2f}"
-        L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {ps} | {fmt(*boot_ci(dt))} | {fmt(*boot_ci(dd), d=3)} |")
-    L += ["", "## E2: scaling (seeds 100-149)\n", "Times are means over the rescued runs.\n",
-          "| rooms | drones | method | rescued % | time to find (s) | time to rescue (s) | ms/tick p95 |",
+        L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {ps} | {fmt(*boot_ci(de))} | {fmt(*boot_ci(dt))} | "
+                 f"{fmt(*boot_ci(dd), d=3)} |")
+    L += ["", "## Scaling (scenarios #100-149)\n", "Times are over the rescued runs.\n",
+          "| rooms | drones | allocation | success % | efficiency % | time to find (s) | ms/tick p95 |",
           "|---|---|---|---|---|---|---|"]
     for n in (6, 10, 16):
         for k in (1, 2, 3, 4, 6):
             for m in ("FULL", "noGA"):
                 sel = (e2["n_rooms"] == n) & (e2["k_units"] == k) & (e2["method"] == m)
-                ok = sel & (e2["success"] == 1)
-                L.append(f"| {n} | {k} | {m} | {100 * e2['success'][sel].mean():.0f} | {np.nanmean(e2['t_find'][ok]):.1f} | "
-                         f"{np.nanmean(e2['t_rescue'][ok]):.1f} | {e2['tick_ms_p95'][sel].mean():.1f} |")
-    L += ["", "## E3: allocation objective at t = 30 s (expected find time; lower is better)\n",
+                ok_ = sel & (e2["success"] == 1)
+                L.append(f"| {n} | {k} | {'GA' if m == 'FULL' else 'greedy'} | {100 * e2['success'][sel].mean():.0f} | "
+                         f"{100 * e2['efficiency'][sel].mean():.0f} | {np.nanmean(e2['t_find'][ok_]):.1f} | "
+                         f"{e2['tick_ms_p95'][sel].mean():.1f} |")
+    L += ["", "## GA allocation quality at t = 30 s (expected time to find; lower is better)\n",
           "| rooms | drones | problems | GA better than greedy | GA gain over greedy % | random vs greedy % | "
           "GA ms | greedy ms |", "|---|---|---|---|---|---|---|---|"]
     for n, k in ((10, 3), (16, 6)):
         sel = (e3["n_rooms"] == n) & (e3["k_units"] == k)
         g, gr, rd = e3["ga"][sel], e3["greedy"][sel], e3["random"][sel]
-        L.append(f"| {n} | {k} | {sel.sum()} | {100 * (g < gr - 1e-9).mean():.0f}% | {fmt(*boot_ci(100 * (gr - g) / gr))} | "
-                 f"{100 * ((rd - gr) / gr).mean():+.0f} | {e3['ga_ms'][sel].mean():.0f} | {e3['greedy_ms'][sel].mean():.1f} |")
-    with open(os.path.join(RES, "tables.md"), "w", encoding="utf-8") as f:
-        f.write("\n".join(L) + "\n")
+        L.append(f"| {n} | {k} | {sel.sum()} | {100 * (g < gr - 1e-9).mean():.0f}% | "
+                 f"{fmt(*boot_ci(100 * (gr - g) / gr))} | {100 * ((rd - gr) / gr).mean():+.0f} | "
+                 f"{e3['ga_ms'][sel].mean():.0f} | {e3['greedy_ms'][sel].mean():.1f} |")
+    L += ["", "## A* heuristic (same sampled queries, full system)\n",
+          "h(n) = c_min x octile distance, c_min = cheapest cell cost on the grid (admissible and consistent; "
+          "paths stay optimal).\n",
+          "| rooms | nodes with no heuristic (Dijkstra) | h = octile | h = c_min x octile |", "|---|---|---|---|"]
+    for n, tight, octl, d in heuristic_rows(e2):
+        L.append(f"| {n} | {d:,} (100%) | {octl:.0f}% | **{tight:.0f}%** |")
+    with open(os.path.join(RES, "tables.md"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(L) + "\n")
     print("wrote", os.path.join(RES, "tables.md"))
 
 
@@ -390,6 +446,7 @@ def main():
     if have["e2.csv"]:
         e2 = load("e2.csv")
         fig_scaling(e2)
+        fig_heuristic(e2)
     if e2 is not None and e3 is not None:
         tables(e1, ok_all, e2, e3)
 
