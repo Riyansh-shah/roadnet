@@ -23,8 +23,9 @@ LIGHT = dict(floor=SURFACE, wall="#383835", furn="#c3c2b7", smoke=SMOKE, prob=PR
              ring="white", label=MUTED, person="#e34948", units=UNIT_COLORS, trail_alpha=0.55)
 _DF = "#262624"
 DARK = dict(floor=_DF, wall="#5a5954", furn="#3a3a37",
-            smoke=LinearSegmentedColormap.from_list("smoke_d", [_DF, "#7a2e0e", "#d95926", "#ff9a3c", "#ffd27a"]),
-            prob=LinearSegmentedColormap.from_list("prob_d", [_DF, "#184f95", "#3987e5", "#86b6ef", "#cde2fb"]),
+            smoke=LinearSegmentedColormap.from_list("smoke_d", [_DF, "#5c1f08", "#a8401a", "#d95926", "#ff8c2e",
+                                                                "#ffc04d"]),
+            prob=LinearSegmentedColormap.from_list("prob_d", [_DF, "#123b6e", "#1c5cab", "#3987e5", "#6da7ec"]),
             blocked="#e66767", exit=GOOD, ring="#f0efec", label="#898781", person="#ff5c5c",
             units=[PALETTE_DARK[i] for i in _UNIT_SLOTS], trail_alpha=0.7)
 
