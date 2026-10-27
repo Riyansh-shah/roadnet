@@ -12,6 +12,7 @@ class Config:
     room_h: int = 6
     corr_w: int = 3            # corridor width, cells
     p_connect: float = 0.5     # connecting door between neighbouring rooms
+    n_exits: int = 1           # 1: the entrance is the only way out; 3: also an east-end and a south side exit
 
     # world (ground truth)
     t_pre: int = 150           # fire burns this long before the units arrive

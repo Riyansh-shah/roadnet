@@ -1,5 +1,5 @@
 """The real-time mission loop: K units enter through one door, search with a shared belief, find the person and
-escort them to the safest exit.
+lead them back out through the entrance.
 
 Each tick: the world evolves -> every unit senses -> the shared belief is updated -> the fuzzy cost grid is rebuilt
 -> areas are (re)allocated if needed -> every unit picks a goal, (re)plans with A* and moves one cell.

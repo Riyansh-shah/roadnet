@@ -1,4 +1,4 @@
-"""Floor plan: one corridor with N rooms on both sides and three exits.
+"""Floor plan: one floor, one corridor with N rooms on both sides, and one door that is both entrance and exit.
 
 Arrays are indexed [row, col]. Row 0 is the north outer wall. The floor plan (walls, furniture, door positions)
 is known to the units; whether a door is passable is not.
@@ -103,10 +103,12 @@ def make_building(n_rooms, rng, cfg):
     solid |= furn
 
     mid = cr0 + cw // 2
-    exits = [(mid, 0), (mid, W - 1)]
-    if ns:
-        r0, c0, _ = rooms[nn + ns // 2]
-        exits.append((r0 + rh, c0 + rw // 2))
+    exits = [(mid, 0)]                       # the entrance, at the west end of the corridor
+    if cfg.n_exits > 1:
+        exits.append((mid, W - 1))
+        if ns:
+            r0, c0, _ = rooms[nn + ns // 2]
+            exits.append((r0 + rh, c0 + rw // 2))
     for e in exits:
         solid[e] = False
 

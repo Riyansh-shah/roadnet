@@ -78,7 +78,7 @@ def fig_mission(seed):
     snaps["rescued"] = _copy_view(m)
     titles = {"entry": "t = 8 s: units enter one by one and fan out on their GA routes",
               "found": f"t = {m.t_find} s: person detected; the nearest unit goes to them, the others leave",
-              "rescued": f"t = {m.t_rescue} s: person led out by the safest exit (health {m.world.health:.2f})"}
+              "rescued": f"t = {m.t_rescue} s: person led back out through the entrance (health {m.world.health:.2f})"}
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 8.4))
     for ax, key in zip(axes, ("entry", "found", "rescued")):
         draw_map(ax, snaps[key], "truth", legend=(key == "rescued"))
