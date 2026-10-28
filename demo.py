@@ -39,6 +39,7 @@ SERIES = ["#3987e5", "#d95926", "#199e70"]       # one colour per climber (valid
 SPEEDS = [1, 3, 10, 30, 100, 300]                # evaluations per frame, per climber
 FRAME_MS = 40
 GRAB = 45                                        # metres: how close a click must be to grab a house
+CHART_NOTE = "metres, against evaluations used (each climber gets the same budget)   ·   hover for values"
 HINT = "Mouse, on any map:  click = add a house   ·   drag = move it   ·   right-click = delete it"
 
 PRESETS = {"triangle": triangle, "square": square}
@@ -151,8 +152,7 @@ class App:
 
     def _build_chart(self):
         self.fig.text(0.025, 0.272, "Best road found so far", fontsize=11, weight="bold", va="center")
-        self.fig.text(0.16, 0.272, "metres, against evaluations used (each climber gets the same budget)", fontsize=9,
-                      color=MUTED, va="center")
+        self.subtitle = self.fig.text(0.16, 0.272, CHART_NOTE, fontsize=9, color=MUTED, va="center")
         ax = self.chart = self.fig.add_axes([0.065, 0.06, 0.47, 0.18])
         ax.set_facecolor(BG)
         for side in ("top", "right", "left"):
@@ -169,6 +169,7 @@ class App:
         self.lines = [ax.plot([], [], color=c, lw=2, solid_joinstyle="round", solid_capstyle="round", zorder=3)[0]
                       for c in SERIES]
         self.ends = [ax.plot([], [], "o", ms=8, color=c, mec=BG, mew=2, zorder=4)[0] for c in SERIES]
+        self.cross = ax.axvline(0, color=MUTED, lw=1, visible=False, zorder=2)
 
     def _button(self, rect, label, callback, primary=False):
         ax = self.fig.add_axes(rect)
@@ -406,7 +407,27 @@ class App:
         elif event.button == 3 and i is not None:
             self.edit(np.delete(houses, i, axis=0))
 
+    def _hover_chart(self, event):
+        """Crosshair on the chart: each climber's best road at the evaluation count under the mouse."""
+        inside = event.inaxes is self.chart and event.xdata is not None and self.race.started
+        self.cross.set_visible(inside)
+        if inside:
+            x = max(event.xdata, 0)
+            self.cross.set_xdata([x, x])
+            values = []
+            for name, h in zip(("Simple", "Restart", "Annealing"), self.race.history):
+                h = np.array(h)
+                values.append(f"{name} {h[np.searchsorted(h[:, 0], x, side='right') - 1, 1]:,.0f} m")
+            self.subtitle.set_text(f"at {x:,.0f} evals:   " + "   ·   ".join(values))
+            self.subtitle.set_color(TEXT2)
+        else:
+            self.subtitle.set_text(CHART_NOTE)
+            self.subtitle.set_color(MUTED)
+        self.fig.canvas.draw_idle()
+
     def on_motion(self, event):
+        if event.inaxes is self.chart or self.cross.get_visible():
+            self._hover_chart(event)
         p = self._map_point(event)
         if self.drag is None or p is None or self.info.get_visible() or self.world.in_lake(p, margin=20):
             return
