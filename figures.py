@@ -349,6 +349,76 @@ def fmt(x, lo=None, hi=None, d=1):
     return f"{x:.{d}f}" if lo is None else f"{x:.{d}f} [{lo:.{d}f}, {hi:.{d}f}]"
 
 
+# ---------------------------------------------------------------- 9: detection reliability (Bayes vs sweep)
+def fig_detection(e5):
+    levels = sorted(set(e5["pd0"]), reverse=True)
+    fig, axes = plt.subplots(1, 2, figsize=(9, 2.9))
+    w = 0.36
+    for j, m in enumerate(("FULL", "noBayes")):
+        lab = "Bayesian search map (final system)" if m == "FULL" else "coverage sweep (no Bayes)"
+        for i, p in enumerate(levels):
+            sel = (e5["pd0"] == p) & (e5["method"] == m)
+            for ax, v in zip(axes, (100 * e5["success"][sel].mean(), 100 * e5["efficiency"][sel].mean())):
+                ax.bar(i + (j - 0.5) * w, v, width=w - 0.04, color=METHOD_COLOR[m], label=lab if i == 0 else None)
+                ax.text(i + (j - 0.5) * w, v, f"{v:.0f}", ha="center", va="bottom", fontsize=8, color=INK2)
+    for ax, title in zip(axes, ("rescued alive (%)", "efficiency vs best possible (%)")):
+        ax.set_xticks(range(len(levels)), [f"{p:.2f}" for p in levels])
+        ax.set_xlabel("chance of spotting the person up close (per look)")
+        ax.set_title(title, loc="left")
+        ax.set_ylim(0, 118)
+        style_axes(ax)
+    h, lab = axes[0].get_legend_handles_labels()
+    fig.legend(h, lab, frameon=False, fontsize=8.5, ncol=2, loc="upper left", bbox_to_anchor=(0.02, 0.92))
+    fig.suptitle("The Bayesian map matters when one look can miss the person (100 scenarios per bar)",
+                 x=0.02, ha="left", fontsize=10, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
+    save(fig, "fig9_detection.png")
+
+
+def extra_sections(L):
+    """Big-fire evidence and detection-reliability tables, when those runs exist."""
+    path = os.path.join(RES, "e1_bigfire.csv")
+    if os.path.exists(path):
+        e = load("e1_bigfire.csv")
+        L += ["", "## Evidence with a big fire (the 4-cell fire burned 150 s before the drones arrived)\n",
+              "| version | success % | efficiency % | efficiency vs final (points) | only final rescued | only this rescued |"
+              " McNemar p |", "|---|---|---|---|---|---|---|"]
+        full = {int(s): (ok, ef) for s, ok, ef, m in zip(e["seed"], e["success"], e["efficiency"], e["method"])
+                if m == "FULL"}
+        for m in METHOD_ORDER:
+            sel = e["method"] == m
+            de, b, c = [], 0, 0
+            for s, ok, ef in zip(e["seed"][sel], e["success"][sel], e["efficiency"][sel]):
+                fok, fef = full[int(s)]
+                de.append(100 * (ef - fef))
+                b += int(fok and not ok)
+                c += int(ok and not fok)
+            p = mcnemar_p(b, c)
+            L.append(f"| {LABEL[m]} | {100 * e['success'][sel].mean():.0f} | {100 * e['efficiency'][sel].mean():.0f} | "
+                     f"{'–' if m == 'FULL' else fmt(*boot_ci(de))} | {b} | {c} | "
+                     f"{'–' if m == 'FULL' else ('<0.01' if p < 0.01 else f'{p:.2f}')} |")
+    path = os.path.join(RES, "e5_detection.csv")
+    if os.path.exists(path):
+        e = load("e5_detection.csv")
+        L += ["", "## Bayesian map vs coverage sweep as detection gets less reliable (scenarios #100-199)\n",
+              "pd0 = chance that one look spots the person up close (it falls further with distance and smoke).\n",
+              "| pd0 | Bayes: success % | sweep: success % | only Bayes rescued | only sweep rescued | McNemar p | "
+              "Bayes: efficiency % | sweep: efficiency % |", "|---|---|---|---|---|---|---|---|"]
+        for p in sorted(set(e["pd0"]), reverse=True):
+            f = {int(s): (ok, ef) for s, ok, ef, m, pp in zip(e["seed"], e["success"], e["efficiency"], e["method"],
+                                                              e["pd0"]) if m == "FULL" and pp == p}
+            g = {int(s): (ok, ef) for s, ok, ef, m, pp in zip(e["seed"], e["success"], e["efficiency"], e["method"],
+                                                              e["pd0"]) if m == "noBayes" and pp == p}
+            b = sum(f[s][0] and not g[s][0] for s in f)
+            c = sum(g[s][0] and not f[s][0] for s in f)
+            pv = mcnemar_p(int(b), int(c))
+            L.append(f"| {p:.2f} | {100 * np.mean([v[0] for v in f.values()]):.0f} | "
+                     f"{100 * np.mean([v[0] for v in g.values()]):.0f} | {int(b)} | {int(c)} | "
+                     f"{'<0.01' if pv < 0.01 else f'{pv:.3f}'} | {100 * np.mean([v[1] for v in f.values()]):.0f} | "
+                     f"{100 * np.mean([v[1] for v in g.values()]):.0f} |")
+        fig_detection(e)
+
+
 def tables(e1, ok_all, e2, e3):
     L = ["# Results\n",
          "Every scenario is winnable: an all-knowing rescuer that starts 120 s late can still save the person "
@@ -400,6 +470,7 @@ def tables(e1, ok_all, e2, e3):
         ps = "<0.01" if p < 0.01 else f"{p:.2f}"
         L.append(f"| {LABEL[m]} | {only_f} | {only_m} | {ps} | {fmt(*boot_ci(de))} | {fmt(*boot_ci(dt))} | "
                  f"{fmt(*boot_ci(dd), d=3)} |")
+    extra_sections(L)
     L += ["", "## Scaling (scenarios #100-149)\n", "Times are over the rescued runs.\n",
           "| rooms | drones | allocation | success % | efficiency % | time to find (s) | ms/tick p95 |",
           "|---|---|---|---|---|---|---|"]

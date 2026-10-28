@@ -1,6 +1,8 @@
 """Batch experiments -> results/*.csv. Calibration used seeds 0-39, so all experiments use seeds from 100 up.
 
-E1  leave-one-out ablation: 5 methods x seeds 100-199, N = 10 rooms, K = 3 units
+E1  evidence: final system vs variants x seeds 100-199, N = 10 rooms, K = 3 drones (small fire: 4 cells at the start)
+E1big  the same with a fire that has burned for 150 s before the drones arrive (--only e1big)
+E5  Bayes vs coverage sweep as the chance of spotting the person drops (0.95, 0.7, 0.5) (--only e5)
 E2  scaling: FULL vs noGA x K in {1,2,3,4,6} x N in {6,10,16} x seeds 100-149
 E3  allocation quality: the allocation problem the team faces at t = 30 s, GA vs greedy vs random,
     for (N=10, K=3) and (N=16, K=6), seeds 100-199; plus GA convergence curves
@@ -20,7 +22,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
-from navsim.config import METHODS
+from navsim.config import METHODS, Config
 from navsim.fuzzy import cost_grid
 from navsim.ga import ga_allocate, greedy_allocate, random_objective, routes_objective
 from navsim.mission import Mission, run_episode
@@ -29,7 +31,8 @@ OUT = "results"
 
 
 def _episode(job):
-    return run_episode(*job)
+    seed, method, n_rooms, k, *over = job
+    return run_episode(seed, method, n_rooms, k, Config(**over[0]) if over else None)
 
 
 def _allocation(job):
@@ -88,6 +91,16 @@ def main():
         if "e1" in todo:
             jobs = [(s, m, 10, 3) for m in METHODS for s in range(100, 200)]
             write("e1.csv", run_all(ex, _episode, jobs, "E1"))
+        if "e5" in todo:        # how detection reliability changes the value of Bayesian search vs a coverage sweep
+            jobs = [(s, m, 10, 3, {"pd0": p}) for p in (0.95, 0.7, 0.5) for m in ("FULL", "noBayes")
+                    for s in range(100, 200)]
+            rows = run_all(ex, _episode, jobs, "E5")
+            for job, r in zip(jobs, rows):
+                r["pd0"] = job[4]["pd0"]
+            write("e5_detection.csv", rows)
+        if "e1big" in todo:     # same comparison when the fire has had 150 s to grow before the drones arrive
+            jobs = [(s, m, 10, 3, {"t_pre": 150}) for m in METHODS for s in range(100, 200)]
+            write("e1_bigfire.csv", run_all(ex, _episode, jobs, "E1 big fire"))
         if "e2" in todo:
             jobs = [(s, m, n, k) for n in (6, 10, 16) for k in (1, 2, 3, 4, 6) for m in ("FULL", "noGA")
                     for s in range(100, 150)]

@@ -8,28 +8,48 @@ Every scenario is winnable: an all-knowing rescuer that starts 120 s late can st
 
 | success | efficiency | time to find | best possible find | time to rescue | best possible rescue | person health at exit |
 |---|---|---|---|---|---|---|
-| **99%** (99/100) | **69 [66, 72] %** | 39.6 [34.3, 45.1] s | 22.2 s | 65.8 [58.6, 73.6] s | 44.4 s | 1.00 |
+| **100%** (100/100) | **68 [65, 71] %** | 42.3 [37.1, 48.0] s | 22.6 s | 68.1 [60.8, 75.5] s | 45.1 s | 1.00 |
 
 ## Evidence for the design (same 100 scenarios)
 
-Times and escort smoke dose are over the 85 scenarios every version rescued.
+Times and escort smoke dose are over the 94 scenarios every version rescued.
 
 | version | success % | efficiency % | time to find (s) | time to rescue (s) | escort smoke dose |
 |---|---|---|---|---|---|
-| Final system | 99 | 69 [66, 72] | 38.3 [33.3, 43.5] | 65.0 [57.1, 73.0] | 0.253 [0.145, 0.386] |
-| + fuzzy cost (rejected) | 99 | 68 [64, 71] | 38.7 [33.6, 44.1] | 65.1 [57.7, 72.8] | 0.222 [0.134, 0.336] |
-| without Bayes | 95 | 46 [42, 50] | 63.5 [50.3, 77.7] | 108.5 [92.3, 126.4] | 0.469 [0.247, 0.764] |
-| without GA (greedy) | 98 | 67 [63, 69] | 41.4 [34.8, 48.0] | 67.8 [59.2, 77.3] | 0.236 [0.137, 0.350] |
-| neither (sweep) | 89 | 44 [40, 49] | 64.0 [52.1, 77.5] | 106.8 [91.4, 123.9] | 0.682 [0.292, 1.200] |
+| Final system | 100 | 68 [65, 71] | 39.9 [34.9, 45.4] | 65.7 [58.7, 73.6] | 0.221 [0.149, 0.301] |
+| + fuzzy cost (rejected) | 98 | 66 [63, 70] | 41.6 [35.6, 48.2] | 67.6 [59.8, 76.1] | 0.262 [0.160, 0.388] |
+| without Bayes | 98 | 70 [66, 74] | 37.8 [32.8, 42.8] | 63.7 [56.7, 70.6] | 0.210 [0.141, 0.280] |
+| without GA (greedy) | 99 | 66 [63, 68] | 42.2 [36.5, 47.8] | 68.1 [59.5, 77.0] | 0.267 [0.184, 0.358] |
+| neither (sweep) | 99 | 68 [64, 71] | 41.0 [35.1, 47.2] | 67.0 [58.9, 75.5] | 0.284 [0.164, 0.442] |
 
 Paired with the final system on the same scenarios (other minus final; a CI that excludes 0 is a clear effect; McNemar p is for the scenarios only one of the two rescued):
 
 | version | only final rescued | only this rescued | McNemar p | efficiency difference (points) | extra time to find (s) | extra escort smoke dose |
 |---|---|---|---|---|---|---|
-| + fuzzy cost (rejected) | 1 | 1 | 1.00 | -1.1 [-4.3, 2.1] | 2.2 [-1.3, 6.4] | -0.025 [-0.063, 0.005] |
-| without Bayes | 5 | 1 | 0.22 | -22.9 [-27.0, -18.7] | 24.0 [13.8, 36.5] | 0.222 [0.084, 0.400] |
-| without GA (greedy) | 1 | 0 | 1.00 | -2.5 [-5.5, 0.5] | 2.9 [-0.7, 6.7] | -0.009 [-0.042, 0.023] |
-| neither (sweep) | 11 | 1 | <0.01 | -24.8 [-29.4, -20.2] | 24.7 [15.5, 35.2] | 0.414 [0.109, 0.879] |
+| + fuzzy cost (rejected) | 2 | 0 | 0.50 | -1.6 [-5.2, 1.5] | 1.4 [-2.0, 5.2] | 0.036 [-0.019, 0.112] |
+| without Bayes | 2 | 0 | 0.50 | 2.0 [-0.7, 4.8] | -3.2 [-6.8, 0.4] | -0.012 [-0.053, 0.036] |
+| without GA (greedy) | 1 | 0 | 1.00 | -2.1 [-4.7, 0.6] | 3.2 [0.3, 6.5] | 0.057 [0.016, 0.106] |
+| neither (sweep) | 1 | 0 | 1.00 | -0.0 [-3.3, 3.4] | -0.5 [-5.1, 4.1] | 0.071 [-0.001, 0.169] |
+
+## Evidence with a big fire (the 4-cell fire burned 150 s before the drones arrived)
+
+| version | success % | efficiency % | efficiency vs final (points) | only final rescued | only this rescued | McNemar p |
+|---|---|---|---|---|---|---|
+| Final system | 99 | 67 | – | 0 | 0 | – |
+| + fuzzy cost (rejected) | 99 | 68 | 0.8 [-2.6, 4.2] | 1 | 1 | 1.00 |
+| without Bayes | 95 | 67 | -0.4 [-4.6, 3.6] | 5 | 1 | 0.22 |
+| without GA (greedy) | 98 | 65 | -1.8 [-5.4, 1.6] | 2 | 1 | 1.00 |
+| neither (sweep) | 96 | 66 | -1.3 [-5.4, 2.5] | 4 | 1 | 0.38 |
+
+## Bayesian map vs coverage sweep as detection gets less reliable (scenarios #100-199)
+
+pd0 = chance that one look spots the person up close (it falls further with distance and smoke).
+
+| pd0 | Bayes: success % | sweep: success % | only Bayes rescued | only sweep rescued | McNemar p | Bayes: efficiency % | sweep: efficiency % |
+|---|---|---|---|---|---|---|---|
+| 0.95 | 100 | 98 | 2 | 0 | 0.500 | 68 | 70 |
+| 0.70 | 100 | 95 | 5 | 0 | 0.062 | 65 | 66 |
+| 0.50 | 99 | 89 | 11 | 1 | <0.01 | 63 | 60 |
 
 ## Scaling (scenarios #100-149)
 
@@ -37,43 +57,43 @@ Times are over the rescued runs.
 
 | rooms | drones | allocation | success % | efficiency % | time to find (s) | ms/tick p95 |
 |---|---|---|---|---|---|---|
-| 6 | 1 | GA | 98 | 54 | 47.7 | 56.3 |
-| 6 | 1 | greedy | 98 | 55 | 51.3 | 11.4 |
-| 6 | 2 | GA | 100 | 71 | 26.1 | 51.8 |
-| 6 | 2 | greedy | 100 | 69 | 28.9 | 8.2 |
-| 6 | 3 | GA | 100 | 78 | 21.2 | 75.9 |
-| 6 | 3 | greedy | 100 | 75 | 24.6 | 11.9 |
-| 6 | 4 | GA | 100 | 80 | 19.8 | 59.2 |
-| 6 | 4 | greedy | 100 | 76 | 24.2 | 9.6 |
-| 6 | 6 | GA | 100 | 82 | 18.7 | 76.1 |
-| 6 | 6 | greedy | 100 | 76 | 23.9 | 12.5 |
-| 10 | 1 | GA | 96 | 45 | 87.2 | 55.5 |
-| 10 | 1 | greedy | 94 | 41 | 109.6 | 17.3 |
-| 10 | 2 | GA | 100 | 62 | 54.1 | 91.0 |
-| 10 | 2 | greedy | 100 | 62 | 51.2 | 22.6 |
-| 10 | 3 | GA | 98 | 69 | 39.8 | 103.4 |
-| 10 | 3 | greedy | 96 | 65 | 44.5 | 25.3 |
-| 10 | 4 | GA | 100 | 71 | 37.4 | 106.3 |
-| 10 | 4 | greedy | 98 | 68 | 40.9 | 25.6 |
-| 10 | 6 | GA | 98 | 73 | 33.2 | 118.1 |
-| 10 | 6 | greedy | 96 | 70 | 38.3 | 29.6 |
-| 16 | 1 | GA | 90 | 38 | 142.6 | 127.0 |
-| 16 | 1 | greedy | 100 | 44 | 151.1 | 71.5 |
-| 16 | 2 | GA | 100 | 65 | 76.3 | 157.3 |
-| 16 | 2 | greedy | 98 | 60 | 81.5 | 57.5 |
-| 16 | 3 | GA | 100 | 69 | 64.1 | 170.4 |
-| 16 | 3 | greedy | 100 | 70 | 63.1 | 61.3 |
-| 16 | 4 | GA | 100 | 75 | 57.1 | 159.0 |
-| 16 | 4 | greedy | 100 | 73 | 57.4 | 73.6 |
-| 16 | 6 | GA | 100 | 78 | 49.7 | 195.0 |
-| 16 | 6 | greedy | 100 | 76 | 54.9 | 76.3 |
+| 6 | 1 | GA | 96 | 51 | 49.2 | 2.5 |
+| 6 | 1 | greedy | 94 | 49 | 55.0 | 1.1 |
+| 6 | 2 | GA | 100 | 65 | 32.2 | 7.0 |
+| 6 | 2 | greedy | 98 | 64 | 31.7 | 2.0 |
+| 6 | 3 | GA | 100 | 77 | 23.2 | 9.3 |
+| 6 | 3 | greedy | 100 | 74 | 25.5 | 2.5 |
+| 6 | 4 | GA | 100 | 80 | 20.1 | 9.7 |
+| 6 | 4 | greedy | 100 | 76 | 23.1 | 3.2 |
+| 6 | 6 | GA | 100 | 81 | 19.6 | 31.7 |
+| 6 | 6 | greedy | 100 | 75 | 23.2 | 5.1 |
+| 10 | 1 | GA | 90 | 39 | 99.2 | 9.1 |
+| 10 | 1 | greedy | 94 | 43 | 86.7 | 2.9 |
+| 10 | 2 | GA | 98 | 60 | 55.0 | 11.0 |
+| 10 | 2 | greedy | 98 | 58 | 56.7 | 3.9 |
+| 10 | 3 | GA | 100 | 67 | 44.7 | 10.8 |
+| 10 | 3 | greedy | 100 | 66 | 47.9 | 4.2 |
+| 10 | 4 | GA | 100 | 74 | 35.9 | 9.9 |
+| 10 | 4 | greedy | 100 | 69 | 44.6 | 5.0 |
+| 10 | 6 | GA | 100 | 78 | 30.9 | 18.9 |
+| 10 | 6 | greedy | 98 | 71 | 38.2 | 6.6 |
+| 16 | 1 | GA | 90 | 40 | 140.2 | 11.7 |
+| 16 | 1 | greedy | 90 | 45 | 119.9 | 5.9 |
+| 16 | 2 | GA | 98 | 63 | 77.3 | 14.4 |
+| 16 | 2 | greedy | 98 | 62 | 80.7 | 6.8 |
+| 16 | 3 | GA | 98 | 66 | 69.8 | 14.6 |
+| 16 | 3 | greedy | 98 | 69 | 64.4 | 6.8 |
+| 16 | 4 | GA | 98 | 72 | 58.2 | 14.1 |
+| 16 | 4 | greedy | 96 | 71 | 57.3 | 7.6 |
+| 16 | 6 | GA | 100 | 77 | 51.1 | 18.9 |
+| 16 | 6 | greedy | 98 | 74 | 57.2 | 8.3 |
 
 ## GA allocation quality at t = 30 s (expected time to find; lower is better)
 
 | rooms | drones | problems | GA better than greedy | GA gain over greedy % | random vs greedy % | GA ms | greedy ms |
 |---|---|---|---|---|---|---|---|
-| 10 | 3 | 54 | 85% | 9.7 [7.5, 11.8] | +172 | 137 | 0.2 |
-| 16 | 6 | 63 | 100% | 12.0 [10.9, 13.2] | +168 | 221 | 0.3 |
+| 10 | 3 | 58 | 95% | 9.2 [7.7, 10.7] | +184 | 144 | 0.2 |
+| 16 | 6 | 74 | 100% | 10.3 [9.3, 11.2] | +171 | 211 | 0.3 |
 
 ## A* heuristic (same sampled planning queries, final system)
 
@@ -81,6 +101,6 @@ h(n) = octile distance to the goal. Every step costs at least its length, so h n
 
 | rooms | nodes expanded with no heuristic (Dijkstra) | nodes expanded by A* | saving |
 |---|---|---|---|
-| 6 | 210,540 | 69,534 | **67%** |
-| 10 | 567,932 | 179,109 | **68%** |
-| 16 | 1,221,828 | 328,524 | **73%** |
+| 6 | 194,215 | 50,070 | **74%** |
+| 10 | 518,961 | 131,736 | **75%** |
+| 16 | 1,215,084 | 272,247 | **78%** |
