@@ -450,7 +450,7 @@ def save(app, path, gif_speed=3):
     """Run the race to the end without a window and save the final frame (.png) or the whole race (.gif)."""
     if path.endswith(".gif"):
         from matplotlib.animation import PillowWriter
-        app.speed = gif_speed
+        app.change_speed(gif_speed - app.speed)
         writer = PillowWriter(fps=12)
         with writer.saving(app.fig, path, dpi=55):
             writer.grab_frame(facecolor=BG)
