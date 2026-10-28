@@ -47,6 +47,10 @@ class Mission:
         self.oracle_find, self.oracle_rescue, self.attempts = sc.oracle_find, sc.oracle_rescue, sc.attempts
         self.srng, self.grng = np.random.default_rng(sc.sensor_seed), np.random.default_rng(sc.ga_seed)
         self.belief = BeliefMap(self.b, cfg) if self.m["bayes"] else RawMap(self.b, cfg)
+        # a passive Bayesian map fed with the same looks, only to score search progress (POS) for every approach
+        self.score_bel = self.belief if self.m["bayes"] else BeliefMap(self.b, cfg)
+        self.looked = np.zeros(self.b.shape, bool)         # cells seen at least once (area covered)
+        self.planner = self.m.get("planner", "astar")
         self.units = [Unit(i) for i in range(k_units)]
         self.exits = [tuple(e) for e in self.b.exits]
         self.t = 0
@@ -59,6 +63,7 @@ class Mission:
         self.site_state = self.belief.p_block[self.sites] > 0.5
         self.ga_calls = self.replans = 0
         self.nodes = dict(tight=0, octile=0, none=0)        # A* expansions on sampled queries, per heuristic
+        self.plan_nodes = 0                                  # every cell the path planner expanded
         self.curve = []                                      # (t, search progress POS, person health) per tick
         self.escort_dose = 0.0
         self.ga_ms, self.tick_ms = [], []
@@ -70,6 +75,10 @@ class Mission:
     @property
     def done(self):
         return self.outcome is not None
+
+    def coverage(self):
+        """Share of the searchable building that has been looked at least once."""
+        return float(self.looked[self.b.area_id >= 0].mean())
 
     def active(self):
         return [u for u in self.units if u.state not in ("QUEUE", "OUT")]
@@ -88,10 +97,14 @@ class Mission:
                 u.trail.append(u.pos)
 
         bel.predict()
+        if self.score_bel is not bel:
+            self.score_bel.predict()
         self.in_view = np.zeros(b.shape, bool)
         for u in self.active():
             o = observe(w, u.pos, self.srng, cfg)
             bel.update(o)
+            if self.score_bel is not bel:
+                self.score_bel.update(o)
             self.in_view[o.r, o.c] = True
             if o.detected and self.t_find is None:          # times are stamped at the end of the tick
                 self.t_find, self.health_find = self.t + 1, w.health
@@ -113,7 +126,8 @@ class Mission:
 
         self.tick_ms.append(1000 * (time.perf_counter() - t_start))
         self.t += 1
-        self.curve.append((self.t, bel.search_progress() if self.t_find is None else 1.0, w.health))
+        self.looked |= self.in_view
+        self.curve.append((self.t, self.score_bel.search_progress() if self.t_find is None else 1.0, w.health))
         if self.outcome is None:
             if w.health <= 0:
                 self.outcome = "casualty"
@@ -288,7 +302,8 @@ class Mission:
                  or any(not np.isfinite(cost[c]) for c in u.path[1:]))
         if stale:
             st = {}
-            path, _ = astar(cost, u.pos, goals, "tight", st)
+            path, _ = astar(cost, u.pos, goals, "none" if self.planner == "dijkstra" else "tight", st)
+            self.plan_nodes += st["expanded"]
             if self.replans % 4 == 0:      # sample: the same query with weaker heuristics, to measure the saving
                 self.nodes["tight"] += st["expanded"]
                 for h in ("octile", "none"):
@@ -325,6 +340,7 @@ class Mission:
             escort_dose=nan if self.t_rescue is None else round(float(self.escort_dose), 4),
             unit_exposure=round(float(sum(u.exposure for u in us)), 3),
             unit_dist=round(sum(u.dist for u in us), 2),
+            plan_nodes=self.plan_nodes, coverage=round(self.coverage(), 4),
             bumps=sum(u.bumps for u in us), replans=self.replans, ga_calls=self.ga_calls,
             tick_ms_mean=round(float(np.mean(self.tick_ms)), 3),
             tick_ms_p95=round(float(np.percentile(self.tick_ms, 95)), 3),

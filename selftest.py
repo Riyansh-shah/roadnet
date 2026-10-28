@@ -127,6 +127,24 @@ for n in range(8):
     eff_ok &= res["outcome"] != "rescued" or res["t_rescue"] >= mi.oracle_rescue
 check("oracle rescue time is physically possible and never beaten by the drones", lower_ok and eff_ok)
 
+more = 0
+for _ in range(20):
+    cost = np.ones((15, 30))
+    cost[rng.random(cost.shape) < 0.15] = np.inf
+    free = np.argwhere(np.isfinite(cost))
+    s, g = map(tuple, free[rng.choice(len(free), 2, replace=False)])
+    st_a, st_d = {}, {}
+    astar(cost, s, [g], "tight", st_a)
+    astar(cost, s, [g], "none", st_d)
+    more += st_d["expanded"] >= st_a["expanded"]
+check("the non-AI planner (Dijkstra) expands at least as many cells as A*", more == 20, f"({more}/20 queries)")
+
+mn = Mission(1, "NONAI")
+mn.run()
+pos = [c[1] for c in mn.curve]
+check("search progress (POS) of the non-AI approach stays in [0, 1] and never drops",
+      all(0 <= p <= 1 for p in pos) and all(b >= a - 1e-12 for a, b in zip(pos, pos[1:])))
+
 r = Mission(0, "FULL").run()
 check("an episode runs end to end", r["outcome"] in ("rescued", "casualty", "timeout"), f"({r['outcome']}, t = {r['ticks']})")
 print("all checks passed")

@@ -83,4 +83,7 @@ METHODS = {
     "noBayes":   dict(fuzzy=False, bayes=False, alloc="ga"),       # last reading only + coverage search
     "noGA":      dict(fuzzy=False, bayes=True,  alloc="greedy"),   # greedy P/cost allocation
     "B0":        dict(fuzzy=False, bayes=False, alloc="sweep"),    # none: coverage search, nearest room first
+    # the non-AI approach shown in the app: room-by-room sweep, nearest room first, plain shortest paths (Dijkstra)
+    "NONAI":     dict(fuzzy=False, bayes=False, alloc="sweep", planner="dijkstra"),
 }
+VISIBILITY = {"Clear": 0.95, "Smoky": 0.7, "Dense smoke": 0.5}   # chance one look spots the person up close (pd0)
