@@ -132,7 +132,7 @@ def simple_hc(world, budget=None, seed=0):
     rng = np.random.default_rng(seed)
     for state, step, stuck in climb(problem, state, rng, budget):
         if stuck:
-            yield Snapshot(state, state, problem.evals, "stuck: local optimum", done=True)
+            yield Snapshot(state, state, problem.evals, "stopped at a local optimum", done=True)
             return
         yield Snapshot(state, state, problem.evals, f"climbing, step {step:.0f} m")
     yield Snapshot(state, state, problem.evals, "budget used", done=True)

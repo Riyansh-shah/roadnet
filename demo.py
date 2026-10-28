@@ -3,6 +3,7 @@
     python demo.py                        interactive window (random map, 12 houses)
     python demo.py --preset square        start on a preset: triangle | square | random
     python demo.py --houses 15 --lakes    random map with 15 houses and lakes
+    python demo.py --preset square --save figs/square.png    run to the end and save a picture (or .gif), no window
 
 Each map shows one climber. They all start from the road network with no junctions (the minimum spanning tree over
 the houses) and get the same number of evaluations. The chart below tracks the best road each has found.
@@ -272,7 +273,6 @@ class App:
             w = PRESETS[w.name]() if w.name in PRESETS else World(w.houses, None, w.name)
         else:
             w = add_lakes(w, self.seed)
-            w.optimum = None
         self.set_world(w)
 
     def clear(self):
@@ -425,17 +425,49 @@ class App:
             actions[event.key]()
 
 
+def save(app, path, gif_speed=3):
+    """Run the race to the end without a window and save the final frame (.png) or the whole race (.gif)."""
+    if path.endswith(".gif"):
+        from matplotlib.animation import PillowWriter
+        app.speed = gif_speed
+        writer = PillowWriter(fps=12)
+        with writer.saving(app.fig, path, dpi=55):
+            writer.grab_frame(facecolor=BG)
+            while not app.race.finished:
+                app.tick()
+                writer.grab_frame(facecolor=BG)
+            for _ in range(36):                 # hold the result for 3 s
+                writer.grab_frame(facecolor=BG)
+    else:
+        while not app.race.finished:
+            app.race.advance(SPEEDS[app.speed])
+        app.refresh()
+        app.fig.savefig(path, dpi=100, facecolor=BG)
+    print(f"saved {path}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--preset", choices=["random", "square", "triangle"], default="random")
     p.add_argument("--houses", type=int, default=12)
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=9)
     p.add_argument("--lakes", action="store_true")
+    p.add_argument("--angles", action="store_true", help="label the angles at each junction")
     p.add_argument("--fullscreen", action="store_true")
+    p.add_argument("--save", metavar="FILE", help="run to the end and save FILE (.png or .gif) instead of a window")
     a = p.parse_args()
-    world = {"square": square, "triangle": triangle}.get(a.preset, lambda: random_world(a.houses, a.seed, a.lakes))()
-    App(world, fullscreen=a.fullscreen, houses=a.houses, seed=a.seed)
-    plt.show()
+    if a.preset in PRESETS:
+        world = PRESETS[a.preset]()
+        world = add_lakes(world, a.seed) if a.lakes else world
+    else:
+        world = random_world(a.houses, a.seed, a.lakes)
+    app = App(world, fullscreen=a.fullscreen, houses=a.houses, seed=a.seed)
+    if a.angles:
+        app.toggle_angles()
+    if a.save:
+        save(app, a.save)
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":

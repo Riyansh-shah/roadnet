@@ -80,9 +80,13 @@ def random_world(n=10, seed=0, lakes=False):
 
 
 def add_lakes(world, seed=0):
-    """The same houses with lakes added in the gaps between them (lakes never cover a house)."""
+    """The same houses with lakes added in the gaps between them (lakes never cover a house).
+
+    The known optimum of a preset no longer holds once there are lakes, so it is cleared.
+    """
     rng = np.random.default_rng(seed + 7919)
     out = world.copy()
+    out.optimum = None
     for attempt in range(300):
         lakes = random_lakes(rng, 3 - attempt // 100)
         d = np.hypot(world.houses[:, None, 0] - lakes[None, :, 0], world.houses[:, None, 1] - lakes[None, :, 1])
