@@ -23,8 +23,11 @@ class World:
         self.n_blocks = 0
 
         self.fire_room = int(rng.integers(b.n_rooms))
-        fire_cells = np.argwhere((b.room_id == self.fire_room) & ~b.solid)
-        self.burning[tuple(fire_cells[rng.integers(len(fire_cells))])] = True
+        k = cfg.fire_start                       # the fire starts as a small k x k block inside the fire room
+        free = (b.room_id == self.fire_room) & ~b.solid
+        starts = [(r, c) for r, c in np.argwhere(free) if free[r:r + k, c:c + k].sum() == k * k]
+        r, c = starts[rng.integers(len(starts))]
+        self.burning[r:r + k, c:c + k] = True
 
         ok = (b.area_id >= 0) & (b.room_id != self.fire_room)
         cand = np.argwhere(ok)
@@ -34,7 +37,7 @@ class World:
         r0, r1 = b.corr_rows
         self.sites = [[tuple(d)] for d in np.argwhere(b.door)] + \
                      [[(r, c) for r in range(r0, r1 + 1)] for c in b.cut_cols]
-        for site in self.sites:
+        for site in self.sites if cfg.debris else ():
             if len(site) == 1 and rng.random() < cfg.p_door_blocked0:
                 self._try_block(site, ())
         self.n_blocks = 0
@@ -72,7 +75,7 @@ class World:
         h[~open_] = 0.0
         self.h = h
 
-        u = rng.random(len(self.sites))
+        u = rng.random(len(self.sites)) if cfg.debris else ()
         for site, x in zip(self.sites, u):
             if not self.blocked[site[0]]:
                 hs = max(h[c] for c in site)

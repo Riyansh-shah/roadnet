@@ -16,6 +16,8 @@ def logit(p):
 
 
 def _prior_block(b, cfg):
+    if not cfg.debris:                   # nothing can get blocked
+        return np.full(b.shape, 1e-3)
     p = np.full(b.shape, cfg.prior_cell)
     p[b.door] = cfg.prior_door
     for e in b.exits:

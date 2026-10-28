@@ -66,6 +66,7 @@ check("lookup table matches the direct FIS", np.percentile(err, 99) < 0.02 and e
 # Bayes
 b = make_building(10, np.random.default_rng(1), cfg)
 bel = BeliefMap(b, cfg)
+bel_d = BeliefMap(b, Config(debris=True))         # blockage filter, tested with debris switched on
 cells = np.argwhere(b.area_id == 3)
 o = Obs(cells[:, 0], cells[:, 1], np.full(len(cells), 1.0), np.zeros(len(cells), bool), np.zeros(len(cells)), False)
 m0 = bel.area_mass()[3]
@@ -77,10 +78,10 @@ check("P(person) stays normalised", abs(bel.pp.sum() - 1) < 1e-9)
 door = tuple(np.argwhere(b.door)[0])
 o = Obs(np.array([door[0]]), np.array([door[1]]), np.array([2.0]), np.array([True]), np.array([0.0]), False)
 for _ in range(2):
-    bel.update(o)
-check("two 'blocked' readings make a door impassable", bel.p_block[door] > cfg.impassable_p,
-      f"(p = {bel.p_block[door]:.2f})")
-check("believed-blocked door is impassable in the cost grid", math.isinf(cost_grid(bel, b.solid, cfg)[door]))
+    bel_d.update(o)
+check("two 'blocked' readings make a door impassable", bel_d.p_block[door] > cfg.impassable_p,
+      f"(p = {bel_d.p_block[door]:.2f})")
+check("believed-blocked door is impassable in the cost grid", math.isinf(cost_grid(bel_d, b.solid, cfg)[door]))
 
 # GA
 M, K = 9, 3

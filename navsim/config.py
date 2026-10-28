@@ -15,12 +15,14 @@ class Config:
     n_exits: int = 1           # 1: the entrance is the only way out; 3: also an east-end and a south side exit
 
     # world (ground truth)
-    t_pre: int = 150           # fire burns this long before the units arrive
+    t_pre: int = 0             # the drones arrive as the fire starts
+    fire_start: int = 2        # the fire starts as a fire_start x fire_start block of cells (2 x 2 = 4 cells)
     p_ignite: float = 0.03     # per tick, for a cell next to a burning cell
     diffusion: float = 0.2     # smoke/heat diffusion rate (stable below 0.25)
     decay: float = 0.003
-    p_door_blocked0: float = 0.15
-    p_block_rate: float = 0.004  # per site per tick, times local hazard
+    debris: bool = False       # falling debris that blocks doors/corridor sections (off: only fire and smoke)
+    p_door_blocked0: float = 0.15  # with debris: share of doors blocked at the start
+    p_block_rate: float = 0.004  # with debris: per site per tick, times local hazard
     health_rate: float = 0.006   # person health lost per tick at hazard 1
     t_max: int = 900
     # winnable-scenario check (navsim/scenario.py): an all-knowing rescuer starting this late must still succeed

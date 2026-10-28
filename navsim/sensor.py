@@ -69,7 +69,7 @@ def observe(world, pos, rng, cfg):
     h = world.h[rr, cc]
     p_hit = cfg.p_hit0 - cfg.p_hit_smoke * h
     u = rng.random(len(rr))
-    blk = np.where(world.blocked[rr, cc], u < p_hit, u < cfg.p_false)
+    blk = np.where(world.blocked[rr, cc], u < p_hit, u < cfg.p_false) if cfg.debris else np.zeros(len(rr), bool)
     z = np.clip(h + rng.normal(0.0, cfg.hazard_sd, len(rr)), 0.0, 1.0)
     detected = False
     hit = np.flatnonzero((rr == world.person[0]) & (cc == world.person[1]))
