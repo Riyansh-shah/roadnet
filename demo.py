@@ -24,7 +24,7 @@ from matplotlib.widgets import Button
 from roadnet.climb import CLIMBERS, budget_for
 from roadnet.draw import MapView
 from roadnet.network import baseline
-from roadnet.world import random_world, square, triangle
+from roadnet.world import MAX_HOUSES, World, random_world, square, triangle
 
 BG, CARD, EDGE = "#1a1a19", "#242422", "#383835"
 TEXT, TEXT2, MUTED = "#f0efec", "#c3c2b7", "#898781"
@@ -33,6 +33,8 @@ GRID = "#2c2c2a"
 SERIES = ["#3987e5", "#d95926", "#199e70"]       # one colour per climber (validated for the dark surface)
 SPEEDS = [1, 3, 10, 30, 100, 300]                # evaluations per frame, per climber
 FRAME_MS = 40
+GRAB = 45                                        # metres: how close a click must be to grab a house
+HINT = "Mouse, on any map:  click = add a house   ·   drag = move it   ·   right-click = delete it"
 
 plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 10, "text.color": TEXT,
                      "axes.edgecolor": EDGE, "toolbar": "None"})
@@ -84,7 +86,11 @@ class App:
         self._build_controls()
         self.timer = self.fig.canvas.new_timer(interval=FRAME_MS)
         self.timer.add_callback(self.tick)
+        self.drag = None
         self.fig.canvas.mpl_connect("key_press_event", self.on_key)
+        self.fig.canvas.mpl_connect("button_press_event", self.on_press)
+        self.fig.canvas.mpl_connect("motion_notify_event", self.on_motion)
+        self.fig.canvas.mpl_connect("button_release_event", self.on_release)
         self.set_world(world)
 
     # ---------------------------------------------------------------- layout
@@ -146,6 +152,7 @@ class App:
         self.b_run = self._button([x, 0.145, 0.08, bh], "▶  Solve", self.toggle_run, primary=True)
         self.b_step = self._button([x + 0.085, 0.145, 0.06, bh], "Step", self.step)
         self.b_reset = self._button([x + 0.15, 0.145, 0.06, bh], "Reset", self.reset)
+        self.hint = self.fig.text(0.585, 0.035, HINT, fontsize=9, color=MUTED, va="center")
 
     # ---------------------------------------------------------------- state
     def set_world(self, world):
@@ -228,7 +235,7 @@ class App:
             lows.append(opt)
         lo, hi = min(lows), race.base_cost
         pad = max(hi - lo, 1.0) * 0.12
-        ax.set_xlim(0, race.budget * 1.02)
+        ax.set_xlim(0, max(race.budget, 100) * 1.02)
         ax.set_ylim(lo - pad, hi + pad)
         self.base_line.set_ydata([hi, hi])
         self.base_label.set_position((0, hi))
@@ -237,6 +244,53 @@ class App:
         if opt:
             self.best_line.set_ydata([opt, opt])
             self.best_label.set_position((0, opt))
+
+    # ---------------------------------------------------------------- mouse editing
+    def _map_point(self, event):
+        if event.xdata is None or event.inaxes not in [v.ax for v in self.views]:
+            return None
+        return np.array([event.xdata, event.ydata])
+
+    def _house_at(self, p):
+        if not self.world.n:
+            return None
+        d = np.hypot(*(self.world.houses - p).T)
+        return int(np.argmin(d)) if d.min() < GRAB else None
+
+    def edit(self, houses, message=HINT):
+        self.set_world(World(houses, self.world.lakes, name="custom"))
+        self.hint.set_text(message)
+
+    def on_press(self, event):
+        p = self._map_point(event)
+        if p is None:
+            return
+        i = self._house_at(p)
+        houses = self.world.houses
+        if event.button == 1 and i is not None:
+            self.drag = i
+        elif event.button == 1:
+            if self.world.n >= MAX_HOUSES:
+                self.hint.set_text(f"At most {MAX_HOUSES} houses.")
+            elif self.world.in_lake(p, margin=20):
+                self.hint.set_text("No houses in a lake.")
+            else:
+                self.edit(np.vstack([houses, p]))
+                return
+            self.fig.canvas.draw_idle()
+        elif event.button == 3 and i is not None:
+            self.edit(np.delete(houses, i, axis=0))
+
+    def on_motion(self, event):
+        p = self._map_point(event)
+        if self.drag is None or p is None or self.world.in_lake(p, margin=20):
+            return
+        houses = self.world.houses.copy()
+        houses[self.drag] = p
+        self.edit(houses)
+
+    def on_release(self, _event):
+        self.drag = None
 
     def on_key(self, event):
         actions = {" ": self.toggle_run, "right": self.step, "r": self.reset}
