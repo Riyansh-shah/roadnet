@@ -142,6 +142,20 @@ class MapView:
                                  zorder=4))
         self.blocked = ax.scatter([], [], marker="x", s=30, c=th["blocked"], lw=1.6, zorder=4)
 
+        # belief layer only: what the drones see right now, and the live P(person) of every room / corridor section
+        self.view, self.mass_txt = None, []
+        if layer == "belief":
+            import matplotlib.patheffects as pe
+            self.view = ax.imshow(np.zeros((H, W, 4)), interpolation="nearest", zorder=1.5)
+            halo = [pe.withStroke(linewidth=2.5, foreground="#1a1a19")]
+            for a in range(b.n_areas):
+                rr, cc = np.nonzero(b.area_id == a)
+                name = f"R{a}" if a < b.n_rooms else "corr."
+                self.mass_txt.append(ax.text(cc.mean(), rr.mean(), "", fontsize=8 if a < b.n_rooms else 7,
+                                             fontweight="bold", color="#f0efec", ha="center", va="center",
+                                             zorder=6.5, path_effects=halo))
+                self.mass_txt[-1]._name = name
+
         self.rects, self.order = [], []
         for a in range(b.n_areas):                # plan outlines can be shown on either layer
             rr, cc = np.nonzero(b.area_id == a)
@@ -166,8 +180,9 @@ class MapView:
         ax.set_xlim(-3.0, W - 0.5)
         ax.set_ylim(H - 0.5, -0.5)
         # everything that sits on the map, in drawing order (used for blitting)
+        extra = ([self.view] if self.view is not None else []) + self.mass_txt
         self.artists = sorted([self.im, *static, self.blocked, *self.rects, *self.order, *self.trails, *self.paths,
-                               self.drones, *self.nums, self.halo, self.star], key=lambda a: a.get_zorder())
+                               self.drones, *self.nums, self.halo, self.star, *extra], key=lambda a: a.get_zorder())
 
     def _img(self, m):
         b, th = m.b, self.th
@@ -180,6 +195,15 @@ class MapView:
     def update(self, m, show_person=True, show_plan=True):
         b, w, bel = m.b, m.world, m.belief
         self.im.set_data(self._img(m))
+        if self.view is not None:                # cells in view this second, lightly highlighted
+            ov = np.zeros(b.shape + (4,))
+            seen = getattr(m, "in_view", None)
+            if seen is not None and m.t_find is None:
+                ov[seen & ~b.solid] = (1.0, 1.0, 1.0, 0.38)
+            self.view.set_data(ov)
+            mass = bel.area_mass() if bel.bayes else np.zeros(b.n_areas)
+            for t, p in zip(self.mass_txt, mass):
+                t.set_text(f"{t._name} {100 * p:.0f}%" if p >= 0.005 and m.t_find is None else "")
         blk = np.argwhere(w.blocked) if self.layer == "truth" else np.argwhere((bel.p_block > 0.5) & ~b.solid)
         self.blocked.set_offsets(blk[:, ::-1] if len(blk) else np.empty((0, 2)))
 

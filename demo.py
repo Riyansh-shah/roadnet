@@ -56,7 +56,7 @@ def card(fig, x, y, w, h, title=None):
                                   mutation_aspect=FIG_W / FIG_H, transform=fig.transFigure,
                                   fc=CARD, ec=EDGE, lw=0.8, zorder=-1))
     if title:
-        fig.text(x + 0.01, y + h - 0.011, title, fontsize=10, fontweight="bold", color=MUTED, va="top")
+        return fig.text(x + 0.01, y + h - 0.011, title, fontsize=10, fontweight="bold", color=MUTED, va="top")
 
 
 def phase(m):
@@ -176,6 +176,9 @@ class Regions:
 
 
 APPROACHES = (("AI", "FULL"), ("NON-AI", "NONAI"))
+AI_TITLE = "AI APPROACH  ·  Bayesian search map + A* paths"
+AI_BELIEF_TITLE = ("AI: WHAT IT BELIEVES  ·  brighter = person more likely  ·  white = what the drones see now  ·  "
+                   "each miss: P × (1 − p_detect), then rescale")
 VIS_NAMES = list(VISIBILITY)
 ROWS = [  # (label, key, lower is better? None = no colouring)
     ("Status", "status", None),
@@ -243,7 +246,7 @@ class App:
         self.kpi_rect = (x0, y0, 4 * tw + 3 * gap, th)
 
         # ---------------- the two maps
-        card(fig, 0.012, 0.415, 0.573, 0.39, "AI APPROACH  ·  Bayesian search map + A* paths")
+        self.ai_title = card(fig, 0.012, 0.415, 0.573, 0.39, AI_TITLE)
         card(fig, 0.012, 0.012, 0.573, 0.393, "NON-AI APPROACH  ·  room-by-room sweep (nearest room first) + "
                                               "plain shortest path (Dijkstra)")
         self.ax_ai = fig.add_axes([0.018, 0.42, 0.561, 0.355])
@@ -457,6 +460,7 @@ class App:
             self.ai_belief = belief
             self.views["AI"] = self._map("AI")
             self.regions.set("map_ai", self.ax_ai.bbox, self.views["AI"].artists)
+            self.ai_title.set_text(AI_BELIEF_TITLE if belief else AI_TITLE)
         self.redraw()
 
     # ---------------- overlays: "How it works" and benchmark results (both cover the maps)
