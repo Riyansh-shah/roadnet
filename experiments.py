@@ -91,6 +91,13 @@ def main():
         if "e1" in todo:
             jobs = [(s, m, 10, 3) for m in METHODS for s in range(100, 200)]
             write("e1.csv", run_all(ex, _episode, jobs, "E1"))
+        if "e6" in todo:        # the AI approach vs the non-AI approach at every visibility level, all metrics
+            jobs = [(s, m, 10, 3, {"pd0": p}) for p in (0.95, 0.7, 0.5) for m in ("FULL", "NONAI")
+                    for s in range(100, 200)]
+            rows = run_all(ex, _episode, jobs, "E6")
+            for job, r in zip(jobs, rows):
+                r["pd0"] = job[4]["pd0"]
+            write("e6_ai_vs_nonai.csv", rows)
         if "e5" in todo:        # how detection reliability changes the value of Bayesian search vs a coverage sweep
             jobs = [(s, m, 10, 3, {"pd0": p}) for p in (0.95, 0.7, 0.5) for m in ("FULL", "noBayes")
                     for s in range(100, 200)]
