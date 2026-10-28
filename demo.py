@@ -8,7 +8,8 @@ Each map shows one climber. They all start from the road network with no junctio
 the houses) and get the same number of evaluations. The chart below tracks the best road each has found.
 
 Mouse, on any map: click = add a house, drag = move it, right-click = delete it.
-Keys: space solve/pause · → step · r reset · n new random map · l lakes · a 120° angles · + / − speed · q quit.
+Keys: space solve/pause · → step · r reset · n new random map · l lakes · a 120° angles · i how it works ·
++ / − speed · q quit.
 """
 import argparse
 import sys
@@ -40,6 +41,32 @@ GRAB = 45                                        # metres: how close a click mus
 HINT = "Mouse, on any map:  click = add a house   ·   drag = move it   ·   right-click = delete it"
 
 PRESETS = {"triangle": triangle, "square": square}
+
+INFO = [
+    ("The problem", """Every house must be connected to every other house by road. A metre of road
+costs 1, and a metre across a lake costs 3. We may add junctions: extra points
+where roads meet. Where should they go to make the total road shortest?
+This is the Steiner tree problem. It is NP-hard, so instead of trying every
+possibility we search with hill climbing."""),
+    ("Search formulation", """State: the positions of the junctions (at most N − 2 for N houses).
+Cost: total road of the cheapest network joining the houses and junctions,
+which is a minimum spanning tree (Prim's algorithm).
+Start: no junctions, the plain spanning tree over the houses. This is the
+baseline without search.
+Moves: nudge a junction  ·  add one in the middle of a 'V' of roads  ·  remove one."""),
+    ("The three climbers (same number of evaluations each)", """Simple hill climbing tries a random move and keeps it only if the road gets
+shorter. When no nearby move helps, it is stuck at a local optimum and stops.
+Random-restart hill climbing starts again from random junctions whenever it
+is stuck, and keeps the best network it ever found.
+Simulated annealing also accepts a longer road with probability e^(−Δ/T), so it
+can climb out of a local optimum. T cools down, so it ends as hill climbing."""),
+    ("How we know it works", """Triangle: the best network has one junction with three 120° angles,
+√3 × side = 1,732 m, which saves 13.4%.
+Square: the X costs 2,828 m, but the H with two junctions costs 2,732 m.
+On flat land, junctions settle at 120° (press "120° angles"). Junctions save at
+most about 13.4% over the no-junction network (Steiner ratio √3/2).
+Measured: road length, % saved, evaluations used, junctions placed."""),
+]
 
 plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 10, "text.color": TEXT,
                      "axes.edgecolor": EDGE, "toolbar": "None"})
@@ -92,6 +119,7 @@ class App:
         self._build_maps()
         self._build_chart()
         self._build_controls()
+        self._build_info()
         self.timer = self.fig.canvas.new_timer(interval=FRAME_MS)
         self.timer.add_callback(self.tick)
         self.drag = None
@@ -178,11 +206,34 @@ class App:
         self.b_run, self.b_step, self.b_reset, _, self.speed_text, _ = row(0.145, "Run", [
             (0.08, "▶  Solve", self.toggle_run, True), (0.055, "Step", self.step), (0.055, "Reset", self.reset),
             (0.022, "−", lambda: self.change_speed(-1)), (0.06, None), (0.022, "+", lambda: self.change_speed(+1))])
-        self.b_angles, self.b_clear = row(0.075, "View", [
-            (0.105, "120° angles: off", self.toggle_angles), (0.07, "Clear map", self.clear)])
+        self.b_angles, self.b_info, self.b_clear = row(0.075, "View", [
+            (0.105, "120° angles: off", self.toggle_angles), (0.1, "How it works", self.toggle_info),
+            (0.07, "Clear map", self.clear)])
         self.hint = self.fig.text(0.585, 0.035, HINT, fontsize=9, color=MUTED, va="center")
         self.houses_text.set_text(f"{self.n_houses} houses")
         self.speed_text.set_text(f"speed ×{SPEEDS[self.speed]}")
+
+    def _build_info(self):
+        ax = self.info = self.fig.add_axes([0.02, 0.3, 0.96, 0.645])
+        ax.set_facecolor(CARD)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for sp in ax.spines.values():
+            sp.set_color(EDGE)
+        ax.text(0.02, 0.94, "How RoadNet works", fontsize=16, weight="bold", va="center", transform=ax.transAxes)
+        ax.text(0.98, 0.94, "click anywhere on this panel, or press i, to close", fontsize=9, color=MUTED,
+                ha="right", va="center", transform=ax.transAxes)
+        for k, (title, body) in enumerate(INFO):
+            x, y = 0.02 + 0.49 * (k % 2), 0.84 - 0.42 * (k // 2)
+            ax.text(x, y, title, fontsize=12, weight="bold", color=BLUE, va="top", transform=ax.transAxes)
+            ax.text(x, y - 0.065, body, fontsize=10.5, color=TEXT2, va="top", linespacing=1.55,
+                    transform=ax.transAxes)
+        ax.set_zorder(10)             # above the figure-level titles and counters
+        ax.set_visible(False)
+
+    def toggle_info(self):
+        self.info.set_visible(not self.info.get_visible())
+        self.fig.canvas.draw_idle()
 
     # ---------------------------------------------------------------- state
     def set_world(self, world):
@@ -332,6 +383,10 @@ class App:
         self.hint.set_text(message)
 
     def on_press(self, event):
+        if self.info.get_visible():
+            if event.inaxes is self.info:
+                self.toggle_info()
+            return
         p = self._map_point(event)
         if p is None:
             return
@@ -353,7 +408,7 @@ class App:
 
     def on_motion(self, event):
         p = self._map_point(event)
-        if self.drag is None or p is None or self.world.in_lake(p, margin=20):
+        if self.drag is None or p is None or self.info.get_visible() or self.world.in_lake(p, margin=20):
             return
         houses = self.world.houses.copy()
         houses[self.drag] = p
@@ -364,7 +419,7 @@ class App:
 
     def on_key(self, event):
         actions = {" ": self.toggle_run, "right": self.step, "r": self.reset, "n": self.new_random,
-                   "l": self.toggle_lakes, "a": self.toggle_angles, "+": lambda: self.change_speed(+1),
+                   "l": self.toggle_lakes, "a": self.toggle_angles, "i": self.toggle_info, "+": lambda: self.change_speed(+1),
                    "=": lambda: self.change_speed(+1), "-": lambda: self.change_speed(-1)}
         if event.key in actions:
             actions[event.key]()
