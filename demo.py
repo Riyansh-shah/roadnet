@@ -116,7 +116,7 @@ class App:
         if fullscreen:
             self.fig.canvas.manager.full_screen_toggle()
         self.running = False
-        self.speed = 2
+        self.speed = 3                    # index into SPEEDS: 30 evaluations per frame
         self._build_header()
         self._build_maps()
         self._build_chart()
