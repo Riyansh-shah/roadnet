@@ -143,21 +143,20 @@ class MapView:
         self.blocked = ax.scatter([], [], marker="x", s=30, c=th["blocked"], lw=1.6, zorder=4)
 
         self.rects, self.order = [], []
-        if layer == "belief":
-            for a in range(b.n_areas):
-                rr, cc = np.nonzero(b.area_id == a)
-                r0, r1, c0, c1 = rr.min(), rr.max(), cc.min(), cc.max()
-                rect = Rectangle((c0 - 0.4, r0 - 0.4), c1 - c0 + 0.8, r1 - r0 + 0.8, fill=False, lw=1.8,
-                                 visible=False, zorder=3)
-                ax.add_patch(rect)
-                self.rects.append(rect)
-                self.order.append(ax.text(c1 + 0.3, r1 + 0.3, "", fontsize=7.5, fontweight="bold", ha="right",
-                                          va="bottom", visible=False, zorder=6))
+        for a in range(b.n_areas):                # plan outlines can be shown on either layer
+            rr, cc = np.nonzero(b.area_id == a)
+            r0, r1, c0, c1 = rr.min(), rr.max(), cc.min(), cc.max()
+            rect = Rectangle((c0 - 0.4, r0 - 0.4), c1 - c0 + 0.8, r1 - r0 + 0.8, fill=False, lw=1.8,
+                             visible=False, zorder=3)
+            ax.add_patch(rect)
+            self.rects.append(rect)
+            self.order.append(ax.text(c1 + 0.3, r1 + 0.3, "", fontsize=7.5, fontweight="bold", ha="right",
+                                      va="bottom", visible=False, zorder=6))
         K = len(m.units)
         cols = [th["units"][k % len(th["units"])] for k in range(K)]
         self.cols = cols
         self.trails = [ax.plot([], [], color=c, lw=1.2, alpha=th["trail_alpha"], zorder=3)[0] for c in cols]
-        self.paths = [ax.plot([], [], color=c, lw=2.2, zorder=5)[0] for c in cols] if layer == "belief" else []
+        self.paths = [ax.plot([], [], color=c, lw=2.2, zorder=5)[0] for c in cols]
         self.drones = ax.scatter(np.zeros(K), np.zeros(K), s=np.zeros(K), c=cols, edgecolors=th["ring"], lw=1.3,
                                  zorder=6)
         self.nums = [ax.text(0, 0, str(k + 1), color="white", fontsize=7, fontweight="bold", ha="center",
@@ -197,7 +196,7 @@ class MapView:
                 self.nums[k].set_position((u.pos[1], u.pos[0]))
             tr = np.array(u.trail) if u.trail else np.empty((0, 2))
             self.trails[k].set_data(tr[:, 1], tr[:, 0]) if len(tr) else self.trails[k].set_data([], [])
-            if self.layer == "belief":
+            if True:                             # current path and planned rooms, on either layer
                 p = np.array(u.path) if (show_plan and inside and len(u.path) > 1) else np.empty((0, 2))
                 self.paths[k].set_data(p[:, 1], p[:, 0]) if len(p) else self.paths[k].set_data([], [])
                 if show_plan and u.state == "SEARCH":

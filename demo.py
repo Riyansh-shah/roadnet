@@ -1,4 +1,4 @@
-"""Presentation app: drones find a person trapped in a burning building and lead them out.
+"""Presentation app: an AI and a non-AI rescue team race on the same burning building.
 
     python demo.py                                   interactive window
     python demo.py --fullscreen                      same, full screen
@@ -31,7 +31,7 @@ from matplotlib.patches import FancyBboxPatch
 from matplotlib.transforms import Bbox, TransformedBbox
 from matplotlib.widgets import Button, CheckButtons
 
-from navsim.astar import c_min
+from navsim.config import VISIBILITY, Config
 from navsim.mission import Mission
 from navsim.render import MapView
 
@@ -83,7 +83,7 @@ class EventLog:
         self.seen_block = set()
         self.state = [u.state for u in m.units]
         self.bumps = [0] * len(m.units)
-        self.ga, self.found, self.escorting = 0, False, False
+        self.ga, self.found, self.escorting, self.ended = 0, False, False, False
         self.add(f"fire burning in {', '.join('R%d' % r for r in sorted(self.fire))}", "fire")
 
     def _fire_rooms(self):
@@ -120,7 +120,7 @@ class EventLog:
                 self.add(f"drone {u.id + 1} hit a hidden blockage", "block")
             self.state[i], self.bumps[i] = u.state, u.bumps
         if m.ga_calls > self.ga:
-            self.add("GA re-planned routes", "ga")
+            pass                                   # re-plans are not shown on screen
             self.ga = m.ga_calls
         if m.t_find is not None and not self.found:
             self.found = True
@@ -128,10 +128,12 @@ class EventLog:
         if m.escort is not None and m.escort.state == "ESCORT" and not self.escorting:
             self.escorting = True
             self.add(f"drone {m.escort.id + 1} leading them out", "good")
-        if m.outcome == "rescued":
-            self.add(f"RESCUED after {m.t_rescue} s", "good")
-        elif m.outcome:
-            self.add("person lost" if m.outcome == "casualty" else "time out", "bad")
+        if m.outcome and not self.ended:          # the other team may still be running: log the end once
+            self.ended = True
+            if m.outcome == "rescued":
+                self.add(f"RESCUED after {m.t_rescue} s", "good")
+            else:
+                self.add("person lost" if m.outcome == "casualty" else "time out", "bad")
 
 
 class Regions:
@@ -173,61 +175,98 @@ class Regions:
             c.blit(it["bbox"])
 
 
+APPROACHES = (("AI", "FULL"), ("NON-AI", "NONAI"))
+VIS_NAMES = list(VISIBILITY)
+ROWS = [  # (label, key, lower is better? None = no colouring)
+    ("Status", "status", None),
+    ("Time to find", "find", True),
+    ("Time to rescue", "rescue", True),
+    ("Efficiency", "eff", False),
+    ("Distance flown", "dist", True),
+    ("Area covered", "cover", None),
+    ("Planner cells expanded", "nodes", True),
+    ("Decision time / tick", "ms", True),
+    ("Person health", "health", False),
+]
+
+
+def mission_values(m):
+    """Raw numbers (for colouring) and display strings of one mission, for the comparison table."""
+    lost = m.outcome is not None and m.outcome != "rescued"
+    v = {
+        "status": (None, "RESCUED" if m.outcome == "rescued" else ("LOST" if lost else
+                   ("found" if m.t_find is not None else "searching"))),
+        "find": (m.t_find, f"{m.t_find} s" if m.t_find is not None else "—"),
+        "rescue": (m.t_rescue, f"{m.t_rescue} s" if m.t_rescue is not None else "—"),
+        "eff": (m.oracle_rescue / m.t_rescue if m.t_rescue else (0.0 if lost else None),
+                f"{100 * m.oracle_rescue / m.t_rescue:.0f} %" if m.t_rescue else ("0 %" if lost else "—")),
+        "dist": (sum(u.dist for u in m.units) * 0.5, f"{sum(u.dist for u in m.units) * 0.5:.0f} m"),
+        "cover": (m.coverage(), f"{100 * m.coverage():.0f} %"),
+        "nodes": (m.plan_nodes, f"{m.plan_nodes:,}"),
+        "ms": (float(np.mean(m.tick_ms)) if m.tick_ms else None,
+               f"{np.mean(m.tick_ms):.1f} ms" if m.tick_ms else "—"),
+        "health": (m.world.health, f"{m.world.health:.2f}"),
+    }
+    return v
+
+
 class App:
     LIMITS = {"rooms": (4, 20), "drones": (1, 8), "speed": (1, 10)}
 
-    def __init__(self, scenario=3, rooms=10, drones=3, speed=2):
+    def __init__(self, scenario=3, rooms=10, drones=3, speed=2, visibility="Clear"):
         self.scenario, self.rooms, self.drones, self.speed = scenario, rooms, drones, speed
-        self.running, self.show_person, self.show_plan = False, True, True
+        self.visibility = visibility
+        self.running, self.show_person, self.show_plan, self.ai_belief = False, True, True, False
         self.bench, self.bench_done = None, None
         self.frame_ms, self.buttons = [], {}
         fig = self.fig = plt.figure(figsize=(FIG_W, FIG_H), facecolor=BG)
         if fig.canvas.manager is not None:
-            fig.canvas.manager.set_window_title("Drone search & rescue")
+            fig.canvas.manager.set_window_title("Drone search & rescue: AI vs non-AI")
 
-        # ---------------- header + KPI tiles (left column)
-        fig.text(0.014, 0.962, "DRONE SEARCH & RESCUE", fontsize=20, fontweight="bold", color=TEXT, va="center")
-        fig.text(0.014, 0.928, "one floor · one entrance that is also the only exit · a fire that starts small and spreads",
+        # ---------------- header + KPI tiles
+        fig.text(0.014, 0.962, "DRONE SEARCH & RESCUE  ·  AI vs NON-AI", fontsize=19, fontweight="bold", color=TEXT,
+                 va="center")
+        fig.text(0.014, 0.928, "the same building, fire and person for both · one entrance that is also the only exit",
                  fontsize=10, color=MUTED, va="center")
-        self.pill = fig.text(0.585, 0.958, "", fontsize=12.5, fontweight="bold", ha="right", va="center",
+        self.pill = fig.text(0.585, 0.958, "", fontsize=12, fontweight="bold", ha="right", va="center",
                              bbox=dict(boxstyle="round,pad=0.5,rounding_size=0.9", fc=BLUE, ec="none"))
         self.kpi = {}
-        tiles = [("time", "TIME"), ("health", "PERSON HEALTH"), ("pos", "PROBABILITY SEARCHED"),
-                 ("inside", "DRONES INSIDE")]
+        tiles = [("time", "TIME"), ("AI", "AI"), ("NON-AI", "NON-AI"), ("vis", "VISIBILITY")]
         tw, gap, x0, y0, th = 0.1375, 0.008, 0.012, 0.815, 0.09
         for i, (key, label) in enumerate(tiles):
             x = x0 + i * (tw + gap)
             card(fig, x, y0, tw, th)
-            fig.text(x + 0.01, y0 + th - 0.014, label, fontsize=8.5, fontweight="bold", color=MUTED, va="top")
-            self.kpi[key] = fig.text(x + 0.01, y0 + 0.027, "", fontsize=21, fontweight="bold", color=TEXT,
+            fig.text(x + 0.01, y0 + th - 0.014, label, fontsize=8.5, fontweight="bold",
+                     color={"AI": BLUE, "NON-AI": GREEN}.get(key, MUTED), va="top")
+            self.kpi[key] = fig.text(x + 0.01, y0 + 0.027, "", fontsize=17, fontweight="bold", color=TEXT,
                                      va="center")
-            if key == "health":
-                self.ax_health = ax = fig.add_axes([x + 0.062, y0 + 0.02, tw - 0.074, 0.015])
-                ax.barh(0, 1, color=EDGE, height=1)
-                self.hbar = ax.barh(0, 1, color=GREEN, height=1)[0]
-                ax.set_xlim(0, 1)
-                ax.set_ylim(-0.5, 0.5)
-                ax.set_axis_off()
         self.kpi_rect = (x0, y0, 4 * tw + 3 * gap, th)
 
-        # ---------------- maps
-        card(fig, 0.012, 0.415, 0.573, 0.39, "REALITY  ·  fire (bright) and smoke (orange), the drones, the trapped person")
-        card(fig, 0.012, 0.012, 0.573, 0.393, "WHAT THE DRONES BELIEVE  ·  blue = where the person probably is,"
-                                              "  outlines = GA plan (D2·1 = drone 2's first room)")
-        self.ax_truth = fig.add_axes([0.018, 0.42, 0.561, 0.355])
-        self.ax_belief = fig.add_axes([0.018, 0.017, 0.561, 0.358])
+        # ---------------- the two maps
+        card(fig, 0.012, 0.415, 0.573, 0.39, "AI APPROACH  ·  Bayesian search map + A* paths")
+        card(fig, 0.012, 0.012, 0.573, 0.393, "NON-AI APPROACH  ·  room-by-room sweep (nearest room first) + "
+                                              "plain shortest path (Dijkstra)")
+        self.ax_ai = fig.add_axes([0.018, 0.42, 0.561, 0.355])
+        self.ax_non = fig.add_axes([0.018, 0.017, 0.561, 0.358])
 
-        # ---------------- metrics column
+        # ---------------- comparison column
         mx, mw = 0.595, 0.205
-        card(fig, mx, 0.4, mw, 0.585, "SUCCESS METRICS")
-        fig.text(mx + 0.01, 0.948, "Success = person reaches the exit alive", fontsize=9.5, color=TEXT, va="top")
-        fig.text(mx + 0.01, 0.927, "Efficiency = best possible rescue time ÷ our time", fontsize=9.5, color=TEXT,
-                 va="top")
-        fig.text(mx + 0.01, 0.906, "(best possible = an all-knowing rescuer)", fontsize=8.5, color=MUTED, va="top")
-        self.ax_pos = self._chart([mx + 0.032, 0.745, mw - 0.045, 0.115], "Probability searched (POS)", BLUE)
-        self.ax_hp = self._chart([mx + 0.032, 0.585, mw - 0.045, 0.115], "Person health", GREEN)
-        self.report = [fig.text(mx + 0.01, 0.535 - i * 0.0215, "", fontsize=10, color=TEXT2, va="center",
-                                family="monospace") for i in range(6)]
+        card(fig, mx, 0.4, mw, 0.585, "AI vs NON-AI  (live)")
+        self.ax_pos = self._chart([mx + 0.032, 0.79, mw - 0.045, 0.125], "Probability searched (POS)")
+        self.lines = {"AI": self.ax_pos.plot([], [], color=BLUE, lw=2, label="AI")[0],
+                      "NON-AI": self.ax_pos.plot([], [], color=GREEN, lw=2, label="NON-AI")[0]}
+        self.ax_pos.legend(loc="lower right", fontsize=7.5, frameon=False, labelcolor=TEXT2)
+        ty = 0.725
+        fig.text(mx + 0.01, ty, "metric", fontsize=8.5, fontweight="bold", color=MUTED, va="center")
+        fig.text(mx + 0.128, ty, "AI", fontsize=8.5, fontweight="bold", color=BLUE, va="center", ha="right")
+        fig.text(mx + 0.198, ty, "NON-AI", fontsize=8.5, fontweight="bold", color=GREEN, va="center", ha="right")
+        self.cells = {}
+        for i, (label, key, _) in enumerate(ROWS):
+            y = ty - 0.031 * (i + 1)
+            fig.text(mx + 0.01, y, label, fontsize=9.3, color=TEXT2, va="center")
+            self.cells[key] = (fig.text(mx + 0.128, y, "", fontsize=9.6, color=TEXT, va="center", ha="right"),
+                               fig.text(mx + 0.198, y, "", fontsize=9.6, color=TEXT, va="center", ha="right"))
+        fig.text(mx + 0.01, 0.412, "green = better of the two", fontsize=8, color=MUTED, va="center")
 
         card(fig, mx, 0.2, mw, 0.19, "HEURISTICS")
         fig.text(mx + 0.01, 0.355, "A*:  f(n) = g(n) + h(n)", fontsize=9.5, color=TEXT, va="top")
@@ -235,58 +274,62 @@ class App:
                  va="top")
         self.heur = [fig.text(mx + 0.01, 0.305 - i * 0.02, "", fontsize=9.2, color=TEXT2, va="top")
                      for i in range(2)]
-        fig.text(mx + 0.01, 0.262, "GA:  fitness = Σ P(room) × arrival time", fontsize=9.5, color=TEXT, va="top")
+        fig.text(mx + 0.01, 0.262, "Bayes:  after a miss, P(cell) × (1 − p_detect)", fontsize=9.5, color=TEXT,
+                 va="top")
         self.heur.append(fig.text(mx + 0.01, 0.242, "", fontsize=9.2, color=TEXT2, va="top"))
 
-        card(fig, mx, 0.012, mw, 0.178, "EVENTS")
+        card(fig, mx, 0.012, mw, 0.178, "EVENTS  (AI mission)")
         self.event_text = [fig.text(mx + 0.01, 0.155 - i * 0.0215, "", fontsize=9.2, color=TEXT2, va="center")
                            for i in range(7)]
 
         # ---------------- controls column
         cx, cw = 0.81, 0.178
-        card(fig, cx, 0.7, cw, 0.285, "SCENARIO")
+        card(fig, cx, 0.655, cw, 0.33, "SCENARIO")
         self.lbl = {}
         self._stepper(0.9, "Scenario", "scenario", self.prev_scenario, self.next_scenario)
-        self._button([cx + 0.01, 0.84, cw - 0.02, 0.038], "🎲  Random scenario", self.random_scenario, name="random")
-        self._stepper(0.78, "Rooms", "rooms", lambda: self._change("rooms", -1), lambda: self._change("rooms", +1))
-        self._stepper(0.725, "Drones", "drones", lambda: self._change("drones", -1),
+        self._button([cx + 0.01, 0.852, cw - 0.02, 0.036], "🎲  Random scenario", self.random_scenario, name="random")
+        self._stepper(0.8, "Rooms", "rooms", lambda: self._change("rooms", -1), lambda: self._change("rooms", +1))
+        self._stepper(0.75, "Drones", "drones", lambda: self._change("drones", -1),
                       lambda: self._change("drones", +1))
+        fig.text(cx + 0.01, 0.682, "Visibility", fontsize=10.5, color=TEXT2, va="center")
+        self.b_vis = self._button([cx + 0.075, 0.663, cw - 0.085, 0.038], "", self.next_visibility,
+                                  name="visibility")
 
-        card(fig, cx, 0.4, cw, 0.29, "PLAYBACK")
-        self.b_start = self._button([cx + 0.01, 0.6, cw - 0.02, 0.048], "▶  Start", self.toggle, primary=True,
+        card(fig, cx, 0.39, cw, 0.255, "PLAYBACK")
+        self.b_start = self._button([cx + 0.01, 0.575, cw - 0.02, 0.044], "▶  Start", self.toggle, primary=True,
                                     name="start")
-        self._button([cx + 0.01, 0.545, (cw - 0.025) / 2, 0.044], "Step  ⏭", self.step_once, name="step")
-        self._button([cx + 0.015 + (cw - 0.025) / 2, 0.545, (cw - 0.025) / 2, 0.044], "■  Reset", self.reset,
+        self._button([cx + 0.01, 0.527, (cw - 0.025) / 2, 0.04], "Step  ⏭", self.step_once, name="step")
+        self._button([cx + 0.015 + (cw - 0.025) / 2, 0.527, (cw - 0.025) / 2, 0.04], "■  Reset", self.reset,
                      name="reset")
-        self._stepper(0.49, "Speed", "speed", lambda: self._change("speed", -1), lambda: self._change("speed", +1))
-        ax = fig.add_axes([cx + 0.006, 0.405, cw - 0.012, 0.06], facecolor=CARD)
+        self._stepper(0.485, "Speed", "speed", lambda: self._change("speed", -1), lambda: self._change("speed", +1))
+        ax = fig.add_axes([cx + 0.006, 0.395, cw - 0.012, 0.08], facecolor=CARD)
         ax.set_axis_off()
-        self.checks = CheckButtons(ax, ["show the trapped person", "show the GA plan"], [True, True],
-                                   label_props={"color": [TEXT] * 2, "fontsize": [10] * 2},
-                                   frame_props={"edgecolor": [TEXT2] * 2, "facecolor": [CARD] * 2, "s": [70] * 2},
-                                   check_props={"facecolor": [BLUE] * 2, "s": [70] * 2})
+        self.checks = CheckButtons(ax, ["show the trapped person", "show plans and paths", "AI map: what it believes"],
+                                   [True, True, False],
+                                   label_props={"color": [TEXT] * 3, "fontsize": [9.6] * 3},
+                                   frame_props={"edgecolor": [TEXT2] * 3, "facecolor": [CARD] * 3, "s": [60] * 3},
+                                   check_props={"facecolor": [BLUE] * 3, "s": [60] * 3})
         self.checks.on_clicked(self._toggle_view)
 
-        self.b_info = self._button([cx, 0.345, cw, 0.045], "ⓘ  How it works", self.toggle_info, name="info")
+        self.b_info = self._button([cx, 0.338, cw, 0.044], "ⓘ  How it works", self.toggle_info, name="info")
 
-        card(fig, cx, 0.012, cw, 0.322, "BENCHMARK")
-        fig.text(cx + 0.01, 0.3, f"{BENCH_N} scenarios in a row with the", fontsize=9, color=MUTED, va="top")
-        fig.text(cx + 0.01, 0.283, "current rooms and drones", fontsize=9, color=MUTED, va="top")
-        self.b_bench = self._button([cx + 0.01, 0.222, cw - 0.02, 0.042], f"Run {BENCH_N} missions",
+        card(fig, cx, 0.012, cw, 0.315, "BENCHMARK")
+        fig.text(cx + 0.01, 0.295, f"the same {BENCH_N} scenarios, both approaches,", fontsize=8.8, color=MUTED,
+                 va="top")
+        fig.text(cx + 0.01, 0.278, "current rooms, drones and visibility", fontsize=8.8, color=MUTED, va="top")
+        self.b_bench = self._button([cx + 0.01, 0.215, cw - 0.02, 0.042], f"Run {BENCH_N} missions",
                                     self.toggle_bench, name="bench")
-        self.bench_text = [fig.text(cx + 0.01, 0.2 - i * 0.02, "", fontsize=9.8, color=TEXT2, va="center")
-                           for i in range(4)]
-        self.ax_bench = fig.add_axes([cx + 0.02, 0.03, cw - 0.03, 0.085], facecolor=CARD)
-        self.ax_bench.set_axis_off()
+        self.bench_text = [fig.text(cx + 0.01, 0.19 - i * 0.024, "", fontsize=9.6, color=TEXT2, va="center")
+                           for i in range(7)]
         self._build_info()
+        self._build_results()
 
         # ---------------- blitting regions (the maps are added in build())
         self.regions = r = Regions(fig)
-        r.set("kpi", r.rect(*self.kpi_rect), [*self.kpi.values(), self.hbar])
+        r.set("kpi", r.rect(*self.kpi_rect), list(self.kpi.values()))
         r.set("pill", r.rect(0.3, 0.93, 0.29, 0.058), [self.pill])
-        r.set("pos", self.ax_pos.bbox, [self.ax_pos.line])
-        r.set("hp", self.ax_hp.bbox, [self.ax_hp.line])
-        r.set("report", r.rect(mx + 0.002, 0.415, mw - 0.004, 0.135), self.report)
+        r.set("pos", self.ax_pos.bbox, list(self.lines.values()))
+        r.set("table", r.rect(mx + 0.11, 0.425, mw - 0.112, 0.285), [t for pair in self.cells.values() for t in pair])
         r.set("heur", r.rect(mx + 0.002, 0.225, mw - 0.004, 0.095), self.heur)
         r.set("events", r.rect(mx + 0.002, 0.015, mw - 0.004, 0.152), self.event_text)
         self._shown = {}
@@ -299,7 +342,7 @@ class App:
         self.timer.start()
 
     # ---------------- widget helpers
-    def _chart(self, rect, title, color):
+    def _chart(self, rect, title):
         ax = self.fig.add_axes(rect, facecolor=CARD)
         ax.set_title(title, fontsize=9, color=TEXT2, loc="left", pad=3)
         for s in ("top", "right"):
@@ -310,7 +353,6 @@ class App:
         ax.set_ylim(0, 1.05)
         ax.set_yticks([0, 0.5, 1])
         ax.grid(True, color=EDGE, lw=0.5)
-        ax.line, = ax.plot([], [], color=color, lw=2)
         return ax
 
     def _button(self, rect, text, cb, primary=False, name=None):
@@ -344,6 +386,10 @@ class App:
         else:
             self.build()
 
+    def next_visibility(self):
+        self.visibility = VIS_NAMES[(VIS_NAMES.index(self.visibility) + 1) % len(VIS_NAMES)]
+        self.build()
+
     def prev_scenario(self):
         if self.scenario > 0:
             self.scenario -= 1
@@ -357,55 +403,76 @@ class App:
         self.scenario = random.randint(0, 9999)
         self.build()
 
+    def _cfg(self):
+        return Config(pd0=VISIBILITY[self.visibility])
+
+    def _map(self, name):
+        m, ax = self.ms[name], (self.ax_ai if name == "AI" else self.ax_non)
+        return MapView(ax, m, "belief" if (name == "AI" and self.ai_belief) else "truth")
+
     def build(self):
-        """(Re)build the mission at t = 0 with the current settings; playback stops."""
+        """(Re)build both missions on the same scenario at t = 0; playback stops."""
         self.running = False
-        self.m = Mission(self.scenario, "FULL", self.rooms, self.drones)
+        self.ms = {name: Mission(self.scenario, method, self.rooms, self.drones, self._cfg())
+                   for name, method in APPROACHES}
+        self.m = self.ms["AI"]
         self.log = EventLog(self.m)
-        self.truth = MapView(self.ax_truth, self.m, "truth")
-        self.belief = MapView(self.ax_belief, self.m, "belief")
-        self.regions.set("truth", self.ax_truth.bbox, self.truth.artists)
-        self.regions.set("belief", self.ax_belief.bbox, self.belief.artists)
+        self.views = {name: self._map(name) for name in self.ms}
+        self.regions.set("map_ai", self.ax_ai.bbox, self.views["AI"].artists)
+        self.regions.set("map_non", self.ax_non.bbox, self.views["NON-AI"].artists)
         self.xmax = 120
         self.redraw()
 
     def reset(self):
         self.build()
 
+    @property
+    def done(self):
+        return all(m.done for m in self.ms.values())
+
     def toggle(self):
         if self.bench:
             return
-        if self.ax_info.get_visible():           # starting closes the explanation panel
-            self.toggle_info()
-        if self.m.done:
+        self._close_overlays()
+        if self.done:
             self.build()
         self.running = not self.running
         self.redraw()
 
     def _advance(self):
-        self.m.step()
+        for m in self.ms.values():
+            if not m.done:
+                m.step()
         self.log.update()
 
     def step_once(self):
         self.running = False
-        if not self.m.done:
+        if not self.done:
             self._advance()
         self.redraw()
 
     def _toggle_view(self, _label):
-        self.show_person, self.show_plan = self.checks.get_status()
+        self.show_person, self.show_plan, belief = self.checks.get_status()
+        if belief != self.ai_belief:
+            self.ai_belief = belief
+            self.views["AI"] = self._map("AI")
+            self.regions.set("map_ai", self.ax_ai.bbox, self.views["AI"].artists)
         self.redraw()
 
-    # ---------------- "How it works" panel (covers the two maps while open)
-    def _build_info(self):
-        import textwrap
-        fig = self.fig
-        x0, y0, w, h = 0.012, 0.012, 0.573, 0.793
-        self.ax_info = ax = fig.add_axes([x0, y0, w, h], facecolor=CARD, zorder=20)
+    # ---------------- overlays: "How it works" and benchmark results (both cover the maps)
+    def _overlay(self):
+        ax = self.fig.add_axes([0.012, 0.012, 0.573, 0.793], facecolor=CARD, zorder=20)
         ax.set_xticks([])
         ax.set_yticks([])
         for s in ax.spines.values():
             s.set_color(EDGE)
+        return ax
+
+    def _build_info(self):
+        import textwrap
+        fig = self.fig
+        x0, y0, w, h = 0.012, 0.012, 0.573, 0.793
+        self.ax_info = ax = self._overlay()
         ax.text(0.025, 0.965, "HOW IT WORKS", fontsize=15, fontweight="bold", color=TEXT, va="top",
                 transform=ax.transAxes)
         ax.text(0.975, 0.965, "press ⓘ again or i to close", fontsize=9, color=MUTED, va="top", ha="right",
@@ -414,35 +481,33 @@ class App:
             ("1  Where is the person?   Bayesian search map",
              "Every free cell starts equally likely. When a drone looks at a cell and does not see the person, that "
              "cell's probability is multiplied by (1 − p_detect) and the map is renormalised. p_detect is high up close "
-             "and low far away or in smoke, so a quick look through smoke leaves some probability behind and the room "
-             "is searched again. Blue on the lower map = still likely."),
+             "and low far away or in smoke, so a look that may have missed leaves probability behind and the room is "
+             "searched again."),
             ("2  Which drone searches which rooms?   Genetic algorithm",
              "A chromosome is an order of all rooms, split between the drones. Fitness = expected time to find the "
-             "person = Σ P(room) × time the drone reaches that room, so likely rooms that are close come first. "
-             "60 candidates evolve for up to 100 generations (tournament selection, order crossover, inversion and "
-             "swap mutation); the plan is re-made whenever the map changes."),
+             "person = Σ P(room) × time the drone reaches that room. 60 candidates evolve for up to 100 generations "
+             "(tournament selection, order crossover, inversion and swap mutation); re-planned when the map changes."),
             ("3  How does a drone fly there?   A* search",
-             "The building is a grid of 0.5 m cells; a drone moves in 8 directions (straight step = 1, diagonal "
-             "step = √2). A* always expands the cell with the smallest f(n) = g(n) + h(n): g = distance flown so far, "
-             "h = estimate of the distance still to go (the heuristic, right). Burning cells are never entered."),
-            ("4  Rescue",
-             "When a drone sees the person, the nearest drone flies to them and leads them back to the entrance along "
-             "an A* path; the other drones leave."),
+             "Grid of 0.5 m cells, 8 directions (straight step = 1, diagonal = √2). A* expands the cell with the "
+             "smallest f(n) = g(n) + h(n): g = distance flown so far, h = the octile distance still to go (right)."),
+            ("NON-AI approach (bottom map)",
+             "No probabilities, no optimisation, no heuristic: each drone takes the nearest room nobody has searched, "
+             "looks at every cell of it once, and moves on; paths come from plain Dijkstra search. A room it has "
+             "looked at is never searched again, even if the look could have missed the person."),
             ("Metrics",
-             "Success = the person reaches the exit alive.  Efficiency = best possible rescue time ÷ our time, where "
-             "best possible = an all-knowing rescuer that knows where the person is.  POS = probability that the "
-             "search so far would have found the person."),
+             "Success = the person reaches the exit alive. Efficiency = best possible rescue time ÷ actual time (best "
+             "possible = an all-knowing rescuer). POS = probability the search so far would have found the person."),
         ]
         y = 0.9
         for title, body in steps:
-            ax.text(0.025, y, title, fontsize=11, fontweight="bold", color=BLUE if title[0].isdigit() else GREEN,
+            ax.text(0.025, y, title, fontsize=11, fontweight="bold",
+                    color=BLUE if title[0].isdigit() else (GREEN if title.startswith("NON") else AMBER),
                     va="top", transform=ax.transAxes)
             lines = textwrap.fill(body, 78)
             ax.text(0.025, y - 0.037, lines, fontsize=9.6, color=TEXT2, va="top", transform=ax.transAxes,
                     linespacing=1.3)
             y -= 0.062 + 0.0245 * (lines.count("\n") + 1)
 
-        # right column: the heuristic, with a worked example
         ax.text(0.6, 0.89, "The heuristic: octile distance", fontsize=11.5, fontweight="bold", color=FIRE, va="top",
                 transform=ax.transAxes)
         d = fig.add_axes([x0 + 0.6 * w, y0 + 0.5 * h, 0.37 * w, 0.32 * h], facecolor=CARD, zorder=21)
@@ -476,7 +541,7 @@ class App:
             ("Walls and fire only make the real route longer,", TEXT2),
             ("so h never overestimates (admissible) and A* still", TEXT2),
             ("returns the shortest path, while expanding about", TEXT2),
-            ("70 % fewer cells than Dijkstra (no heuristic).", TEXT2),
+            ("75 % fewer cells than Dijkstra (no heuristic).", TEXT2),
         ]
         for i, (t, c) in enumerate(expl):
             ax.text(0.6, 0.47 - i * 0.034, t, fontsize=9.4, color=c, va="top", transform=ax.transAxes,
@@ -484,20 +549,63 @@ class App:
         ax.set_visible(False)
         d.set_visible(False)
 
-    def toggle_info(self):
+    def _build_results(self):
+        self.ax_res = ax = self._overlay()
+        self.res_title = ax.text(0.025, 0.965, "", fontsize=14, fontweight="bold", color=TEXT, va="top",
+                                 transform=ax.transAxes)
+        ax.text(0.975, 0.965, "press the benchmark button to close", fontsize=9, color=MUTED, va="top", ha="right",
+                transform=ax.transAxes)
+        heads = [(0.03, "metric", MUTED, "left"), (0.5, "AI", BLUE, "right"), (0.7, "NON-AI", GREEN, "right"),
+                 (0.93, "difference", MUTED, "right")]
+        for x, t, c, ha in heads:
+            ax.text(x, 0.86, t, fontsize=11, fontweight="bold", color=c, ha=ha, va="center", transform=ax.transAxes)
+        self.res_rows = []
+        for i in range(10):
+            y = 0.8 - i * 0.062
+            self.res_rows.append([ax.text(x, y, "", fontsize=11, color=TEXT2, ha=ha, va="center",
+                                          transform=ax.transAxes) for x, _, _, ha in heads])
+        self.res_note = ax.text(0.03, 0.08, "", fontsize=9.2, color=MUTED, va="center", transform=ax.transAxes)
+        ax.set_visible(False)
+
+    def _close_overlays(self):
+        changed = False
+        if self.ax_info.get_visible():
+            self.toggle_info(redraw=False)
+            changed = True
+        if self.ax_res.get_visible():
+            self._show_results(False)
+            changed = True
+        return changed
+
+    def _show_maps(self, show):
+        for a in (self.ax_ai, self.ax_non):
+            a.set_visible(show)
+
+    def toggle_info(self, redraw=True):
         show = not self.ax_info.get_visible()
         if show:
             self.running = False
+            self._show_results(False)
         for a in (self.ax_info, self.ax_oct):
             a.set_visible(show)
-        for a in (self.ax_truth, self.ax_belief):
-            a.set_visible(not show)
+        self._show_maps(not show)
         self.b_info.label.set_text("✕  Close" if show else "ⓘ  How it works")
-        self.redraw()
+        if redraw:
+            self.redraw()
+
+    def _show_results(self, show):
+        self.ax_res.set_visible(show)
+        if show:
+            for a in (self.ax_info, self.ax_oct):
+                a.set_visible(False)
+            self.b_info.label.set_text("ⓘ  How it works")
+        self._show_maps(not show)
 
     def toggle_bench(self):
         if self.bench:                                   # stop a running benchmark
             self.bench = None
+        elif self.ax_res.get_visible():                  # close the results
+            self._show_results(False)
         else:
             self.running = False
             self.bench = dict(i=0, rows=[], first=self.scenario)
@@ -505,7 +613,11 @@ class App:
 
     def _bench_step(self):
         b = self.bench
-        b["rows"].append(Mission(b["first"] + b["i"], "FULL", self.rooms, self.drones).run())
+        cfg = self._cfg()
+        for name, method in APPROACHES:
+            r = Mission(b["first"] + b["i"], method, self.rooms, self.drones, cfg).run()
+            r["approach"], r["visibility"] = name, self.visibility
+            b["rows"].append(r)
         b["i"] += 1
         if b["i"] >= BENCH_N:
             os.makedirs("results", exist_ok=True)
@@ -514,11 +626,53 @@ class App:
                 wr.writeheader()
                 wr.writerows(b["rows"])
             self.bench_done, self.bench = b["rows"], None
+            self._fill_results()
+            self._show_results(True)
+
+    def _fill_results(self):
+        rows = self.bench_done
+        by = {name: [r for r in rows if r["approach"] == name] for name, _ in APPROACHES}
+        both = [i for i in range(len(by["AI"])) if by["AI"][i]["success"] and by["NON-AI"][i]["success"]]
+
+        def mean(name, key, idx=None, scale=1.0):
+            vals = [by[name][i][key] for i in (idx if idx is not None else range(len(by[name])))]
+            return scale * float(np.mean(vals)) if vals else float("nan")
+
+        spec = [  # label, AI value, NON-AI value, format, lower is better
+            ("People rescued alive", sum(r["success"] for r in by["AI"]), sum(r["success"] for r in by["NON-AI"]),
+             "{:.0f} / " + str(len(by["AI"])), False),
+            ("Efficiency (vs best possible)", mean("AI", "efficiency", scale=100), mean("NON-AI", "efficiency",
+                                                                                     scale=100), "{:.0f} %", False),
+            ("Time to find *", mean("AI", "t_find", both), mean("NON-AI", "t_find", both), "{:.1f} s", True),
+            ("Time to rescue *", mean("AI", "t_rescue", both), mean("NON-AI", "t_rescue", both), "{:.1f} s", True),
+            ("Distance flown *", mean("AI", "unit_dist", both, 0.5), mean("NON-AI", "unit_dist", both, 0.5),
+             "{:.0f} m", True),
+            ("Area covered", mean("AI", "coverage", scale=100), mean("NON-AI", "coverage", scale=100), "{:.0f} %",
+             None),
+            ("Planner cells expanded", mean("AI", "plan_nodes"), mean("NON-AI", "plan_nodes"), "{:,.0f}", True),
+            ("Decision time per tick", mean("AI", "tick_ms_mean"), mean("NON-AI", "tick_ms_mean"), "{:.1f} ms",
+             True),
+            ("Person health at the end", mean("AI", "health"), mean("NON-AI", "health"), "{:.2f}", False),
+        ]
+        for cells, (label, a, n, fmt, lower) in zip(self.res_rows, spec):
+            diff = a - n
+            better = None if lower is None or abs(diff) < 1e-9 else ("AI" if (diff < 0) == lower else "NON-AI")
+            vals = [label, fmt.format(a), fmt.format(n), ("+" if diff > 0 else "") + fmt.format(diff)]
+            for t, v in zip(cells, vals):
+                t.set_text(v)
+            cells[1].set_color(GREEN if better == "AI" else TEXT)
+            cells[2].set_color(GREEN if better == "NON-AI" else TEXT)
+        for cells in self.res_rows[len(spec):]:
+            for t in cells:
+                t.set_text("")
+        self.res_title.set_text(f"BENCHMARK  ·  scenarios #{rows[0]['seed']}-#{rows[-1]['seed']}  ·  "
+                                f"{self.rooms} rooms, {self.drones} drones, visibility: {self.visibility}")
+        self.res_note.set_text(f"* averaged over the {len(both)} scenarios both approaches rescued.  Green = better.  "
+                               "Saved to results/benchmark.csv")
 
     def _key(self, e):
         {" ": self.toggle, "right": self.step_once, "r": self.reset, "n": self.random_scenario,
-         "i": self.toggle_info}.get(
-            e.key, lambda: None)()
+         "i": self.toggle_info}.get(e.key, lambda: None)()
 
     def _tick(self):
         """Timer callback. It reschedules itself only after drawing, so frames can never pile up."""
@@ -530,49 +684,75 @@ class App:
                 t = time.perf_counter()
                 for _ in range(self.speed):
                     self._advance()
-                    if self.m.done:
+                    if self.done:
                         self.running = False
                         break
-                self.redraw(full=self.m.done, sync=True)   # a full redraw only when the mission ends
+                finished = any(m.done for m in self.ms.values()) and self._just_finished()
+                self.redraw(full=self.done or finished, sync=True)
                 self.frame_ms.append(1000 * (time.perf_counter() - t))
         finally:
             self.timer.interval = 30 if (self.running or self.bench) else 100
             self.timer.start()
 
+    def _just_finished(self):
+        """True once, at the frame where one of the two missions ends (to refresh the static parts)."""
+        state = tuple(m.done for m in self.ms.values())
+        changed = state != getattr(self, "_done_state", None)
+        self._done_state = state
+        return changed
+
     # ---------------- drawing
+    def _status(self, m):
+        if m.outcome == "rescued":
+            return f"rescued {m.t_rescue} s", GREEN
+        if m.outcome:
+            return "LOST", RED
+        if m.t_find is not None:
+            return f"found {m.t_find} s", AMBER
+        return "searching", TEXT
+
     def redraw(self, full=True, sync=False):
         """Update everything; then either redraw the whole window (full) or only the regions that changed."""
-        m, w = self.m, self.m.world
-        self.truth.update(m, show_person=self.show_person)
-        self.belief.update(m, show_plan=self.show_plan)
+        for name, v in self.views.items():
+            v.update(self.ms[name], show_person=self.show_person, show_plan=self.show_plan)
+        ai, non = self.ms["AI"], self.ms["NON-AI"]
 
-        text, fc, tc = phase(m)
+        text, fc, tc = phase(ai)
+        text = "AI: " + text
         if self.bench:
             text, fc, tc = f"BENCHMARK  {self.bench['i']} / {BENCH_N}", BLUE, "white"
         self.pill.set_text(f"●  {text}")
         self.pill.set_color(tc)
         self.pill.get_bbox_patch().set_facecolor(fc)
 
-        pos = m.curve[-1][1] if m.curve else 0.0
-        hcol = GREEN if w.health > 0.5 else (AMBER if w.health > 0.25 else RED)
-        self.kpi["time"].set_text(f"{m.t} s")
-        self.kpi["health"].set_text(f"{w.health:.2f}")
-        self.kpi["health"].set_color(hcol)
-        self.kpi["pos"].set_text(f"{100 * pos:.0f} %")
-        self.kpi["inside"].set_text(f"{sum(u.state not in ('QUEUE', 'OUT') for u in m.units)} / {len(m.units)}")
-        self.hbar.set_width(w.health)
-        self.hbar.set_color(hcol)
+        self.kpi["time"].set_text(f"{max(ai.t, non.t)} s")
+        for name in ("AI", "NON-AI"):
+            s, col = self._status(self.ms[name])
+            self.kpi[name].set_text(s)
+            self.kpi[name].set_color(col)
+        self.kpi["vis"].set_text(self.visibility)
 
-        c = np.array(m.curve, float) if m.curve else np.empty((0, 3))
-        self.ax_pos.line.set_data(c[:, 0], c[:, 1])
-        self.ax_hp.line.set_data(c[:, 0], c[:, 2])
-        while m.t + 5 > self.xmax:                  # the chart axes only change when time outgrows them
+        for name, line in self.lines.items():
+            c = np.array(self.ms[name].curve, float) if self.ms[name].curve else np.empty((0, 3))
+            line.set_data(c[:, 0], c[:, 1])
+        while max(ai.t, non.t) + 5 > self.xmax:      # the chart axes only change when time outgrows them
             self.xmax *= 2
             full = True
-        for a in (self.ax_pos, self.ax_hp):
-            a.set_xlim(0, self.xmax)
-        self._report(m)
-        self._heuristics(m)
+        self.ax_pos.set_xlim(0, self.xmax)
+
+        va, vn = mission_values(ai), mission_values(non)
+        for label, key, lower in ROWS:
+            ta, tn = self.cells[key]
+            (a, sa), (n, sn) = va[key], vn[key]
+            ta.set_text(sa)
+            tn.set_text(sn)
+            better = None
+            if lower is not None and a is not None and n is not None and abs(a - n) > 1e-9:
+                better = "AI" if (a < n) == lower else "NON"
+            ta.set_color(GREEN if better == "AI" else TEXT)
+            tn.set_color(GREEN if better == "NON" else TEXT)
+
+        self._heuristics(ai, non)
         self._events()
         if full:
             self._bench_panel()
@@ -580,11 +760,14 @@ class App:
             self.lbl[k].set_text(str(getattr(self, k)))
         self.lbl["scenario"].set_text(f"#{self.scenario}")
         self.lbl["speed"].set_text(f"{self.speed}×")
-        self.b_start.label.set_text("❚❚  Pause" if self.running else ("↻  Replay" if m.done else "▶  Start"))
-        self.b_bench.label.set_text("■  Stop benchmark" if self.bench else f"Run {BENCH_N} missions")
+        self.b_vis.label.set_text(f"{self.visibility}  ▸")
+        self.b_start.label.set_text("❚❚  Pause" if self.running else ("↻  Replay" if self.done else "▶  Start"))
+        self.b_bench.label.set_text("■  Stop benchmark" if self.bench else
+                                    ("✕  Close results" if self.ax_res.get_visible() else f"Run {BENCH_N} missions"))
 
         texts = {k: tuple((t.get_text(), t.get_color()) for t in arts)
-                 for k, arts in (("report", self.report), ("heur", self.heur), ("events", self.event_text))}
+                 for k, arts in (("table", [t for p in self.cells.values() for t in p]), ("heur", self.heur),
+                                 ("events", self.event_text))}
         if full or not self.regions.ready:
             self._shown = texts
             if sync:
@@ -592,39 +775,18 @@ class App:
             else:
                 self.fig.canvas.draw_idle()
             return
-        names = ["truth", "belief", "kpi", "pill", "pos", "hp"]
+        names = ["map_ai", "map_non", "kpi", "pill", "pos"]
         names += [k for k, v in texts.items() if self._shown.get(k) != v]
         self._shown = texts
         self.regions.refresh(names)
 
-    def _report(self, m):
-        if m.outcome == "rescued":
-            res, col = "✓ RESCUED ALIVE", GREEN
-        elif m.outcome:
-            res, col = ("✗ PERSON LOST" if m.outcome == "casualty" else "✗ TIME OUT"), RED
+    def _heuristics(self, ai, non):
+        self.heur[0].set_text("never overestimates (each step costs ≥ its length)")
+        if ai.plan_nodes and non.plan_nodes:
+            self.heur[1].set_text(f"AI planner: {ai.plan_nodes:,} cells · NON-AI: {non.plan_nodes:,}")
         else:
-            res, col = ("… running" if m.t else "… press Start"), TEXT2
-        find = f"{m.t_find} s" if m.t_find is not None else "—"
-        resc = f"{m.t_rescue} s" if m.t_rescue is not None else "—"
-        eff = f"{100 * m.oracle_rescue / m.t_rescue:.0f} %" if m.t_rescue else ("0 %" if m.outcome else "—")
-        lines = [(f"Result      {res}", col),
-                 (f"Find        {find:>6}   best {m.oracle_find} s", TEXT2),
-                 (f"Rescue      {resc:>6}   best {m.oracle_rescue} s", TEXT2),
-                 (f"Efficiency  {eff:>6}", GREEN if m.outcome == "rescued" else TEXT2),
-                 (f"Health      {m.world.health:6.2f}", TEXT2),
-                 (f"Flown       {sum(u.dist for u in m.units) * 0.5:6.0f} m", TEXT2)]
-        for t, (s, col) in zip(self.report, lines):
-            t.set_text(s)
-            t.set_color(col)
-
-    def _heuristics(self, m):
-        cm = c_min(m.cost) if m.cost is not None else 0.0
-        n = m.nodes
-        self.heur[0].set_text("never overestimates (each step costs ≥ its length)" if cm <= 1.0 + 1e-9 else
-                              f"scaled by the cheapest step cost {cm:.1f}: still admissible")
-        self.heur[1].set_text(f"{100 * (1 - n['tight'] / n['none']):.0f} % fewer nodes than Dijkstra (h = 0)"
-                              if n["none"] else "node savings appear once drones plan")
-        self.heur[2].set_text(f"= expected time to find  ·  {m.ga_calls} re-plans")
+            self.heur[1].set_text("cells expanded appear once drones plan")
+        self.heur[2].set_text(f"then renormalise  ·  searched so far: {100 * (ai.curve[-1][1] if ai.curve else 0):.0f} %")
 
     def _events(self):
         for t, (when, line, kind, _) in zip(self.event_text, reversed(self.log.lines[-len(self.event_text):])):
@@ -636,46 +798,39 @@ class App:
 
     def _bench_panel(self):
         rows = self.bench["rows"] if self.bench else self.bench_done
-        ax = self.ax_bench
-        ax.clear()
-        ax.set_axis_off()
         for t in self.bench_text:
             t.set_text("")
         if not rows:
             self.bench_text[0].set_text("running…" if self.bench else "not run yet")
             self.bench_text[0].set_color(MUTED)
             return
-        ok = [r for r in rows if r["success"]]
-        sr = 100 * len(ok) / len(rows)
-        eff = 100 * np.mean([r["efficiency"] for r in rows])
-        tf = np.mean([r["t_find"] for r in ok]) if ok else float("nan")
-        lines = [(f"Success rate   {sr:3.0f} %  ({len(ok)}/{len(rows)})", GREEN if sr >= 90 else AMBER),
-                 (f"Mean efficiency  {eff:3.0f} %", TEXT),
-                 (f"Mean time to find  {tf:.0f} s", TEXT2),
-                 ("running…" if self.bench else "saved: results/benchmark.csv", MUTED)]
+        n = len(rows) // 2
+        lines = [(f"after {n} scenario{'s' if n != 1 else ''}:", MUTED)]
+        for name, _ in APPROACHES:
+            rs = [r for r in rows if r["approach"] == name]
+            ok = sum(r["success"] for r in rs)
+            lines.append((f"{name:7s} rescued {ok}/{len(rs)}", BLUE if name == "AI" else GREEN))
+            lines.append((f"        efficiency {100 * np.mean([r['efficiency'] for r in rs]):.0f} %", TEXT2))
+        lines.append(("running…" if self.bench else "full table on the left", MUTED))
         for t, (s, col) in zip(self.bench_text, lines):
             t.set_text(s)
             t.set_color(col)
-        ax.bar(range(len(rows)), [r["efficiency"] for r in rows], width=0.75,
-               color=[GREEN if r["success"] else RED for r in rows])
-        ax.set_xlim(-0.6, BENCH_N - 0.4)
-        ax.set_ylim(0, 1.05)
-        ax.set_title("efficiency per mission", fontsize=8.5, color=MUTED, loc="left", pad=2)
 
 
 def record(app, path, fps=10):
-    """Run the current scenario to the end and write a GIF of the whole window."""
+    """Run the current scenario (both approaches) to the end and write a GIF of the whole window."""
     from matplotlib.animation import PillowWriter
     writer = PillowWriter(fps=fps)
     with writer.saving(app.fig, path, dpi=60):
         writer.grab_frame(facecolor=BG)
-        while not app.m.done:
+        while not app.done:
             app._advance()
             app.redraw()
             writer.grab_frame(facecolor=BG)
         for _ in range(2 * fps):
             writer.grab_frame(facecolor=BG)
-    print("wrote", path, "outcome:", app.m.outcome, "t =", app.m.t)
+    print("wrote", path, "AI:", app.ms["AI"].outcome, app.ms["AI"].t_rescue, "| NON-AI:", app.ms["NON-AI"].outcome,
+          app.ms["NON-AI"].t_rescue)
 
 
 def main():
@@ -684,10 +839,11 @@ def main():
     ap.add_argument("--rooms", type=int, default=10)
     ap.add_argument("--drones", type=int, default=3)
     ap.add_argument("--speed", type=int, default=2)
+    ap.add_argument("--visibility", default="Clear", choices=VIS_NAMES)
     ap.add_argument("--fullscreen", action="store_true")
-    ap.add_argument("--save", help="record the mission to this GIF instead of opening a window")
+    ap.add_argument("--save", help="record the race to this GIF instead of opening a window")
     a = ap.parse_args()
-    app = App(a.scenario, a.rooms, a.drones, a.speed)
+    app = App(a.scenario, a.rooms, a.drones, a.speed, a.visibility)
     if a.save:
         record(app, a.save)
         return
