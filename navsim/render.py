@@ -106,8 +106,6 @@ def draw_map(ax, m, layer="truth", vmax=None, routes=True, trails=True, legend=F
     if legend:
         from matplotlib.lines import Line2D
         h = [Line2D([], [], marker="s", ls="", color=th["exit"], label="entrance / exit"),
-             Line2D([], [], marker="x", ls="", color=th["blocked"],
-                    label="blocked" if layer == "truth" else "believed blocked"),
              Line2D([], [], marker="o", ls="", color=th["units"][0], label="drone"),
              Line2D([], [], marker="*", ls="", color=th["person"], markersize=10, label="person")]
         ax.legend(handles=h, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=4, frameon=False, fontsize=8,

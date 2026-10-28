@@ -10,7 +10,7 @@ Every scenario is checked to be winnable (navsim/scenario.py).
 Controls (right): scenario ◀ ▶ / random, rooms − +, drones − +, Start/Pause, Step, Reset, speed − +, view toggles,
 and a 20-mission benchmark. Metrics (middle): success definition, live search-progress and health charts, the
 end-of-mission report card against the best possible rescue, and the heuristics with their measured effect.
-Keys: space start/pause · → step · r reset · n random scenario · f full screen · q quit.
+Keys: space start/pause · → step · r reset · n random scenario · i how it works · f full screen · q quit.
 """
 import argparse
 import csv
@@ -161,7 +161,7 @@ class Regions:
 
     def _draw(self, it):
         for a in it["artists"]:
-            if a.get_visible():
+            if a.get_visible() and (a.axes is None or a.axes.get_visible()):
                 self.fig.draw_artist(a)
 
     def refresh(self, names):
@@ -187,7 +187,7 @@ class App:
 
         # ---------------- header + KPI tiles (left column)
         fig.text(0.014, 0.962, "DRONE SEARCH & RESCUE", fontsize=20, fontweight="bold", color=TEXT, va="center")
-        fig.text(0.014, 0.928, "one floor · one entrance that is also the only exit · fire, smoke and falling debris",
+        fig.text(0.014, 0.928, "one floor · one entrance that is also the only exit · a fire that starts small and spreads",
                  fontsize=10, color=MUTED, va="center")
         self.pill = fig.text(0.585, 0.958, "", fontsize=12.5, fontweight="bold", ha="right", va="center",
                              bbox=dict(boxstyle="round,pad=0.5,rounding_size=0.9", fc=BLUE, ec="none"))
@@ -211,7 +211,7 @@ class App:
         self.kpi_rect = (x0, y0, 4 * tw + 3 * gap, th)
 
         # ---------------- maps
-        card(fig, 0.012, 0.415, 0.573, 0.39, "REALITY  ·  smoke and fire, blocked doors, the trapped person")
+        card(fig, 0.012, 0.415, 0.573, 0.39, "REALITY  ·  fire (bright) and smoke (orange), the drones, the trapped person")
         card(fig, 0.012, 0.012, 0.573, 0.393, "WHAT THE DRONES BELIEVE  ·  blue = where the person probably is,"
                                               "  outlines = GA plan (D2·1 = drone 2's first room)")
         self.ax_truth = fig.add_axes([0.018, 0.42, 0.561, 0.355])
@@ -231,7 +231,8 @@ class App:
 
         card(fig, mx, 0.2, mw, 0.19, "HEURISTICS")
         fig.text(mx + 0.01, 0.355, "A*:  f(n) = g(n) + h(n)", fontsize=9.5, color=TEXT, va="top")
-        fig.text(mx + 0.01, 0.335, "h(n) = octile distance to the goal", fontsize=9.5, color=TEXT, va="top")
+        fig.text(mx + 0.01, 0.335, "h(n) = octile distance (straight 1, diagonal √2)", fontsize=9.5, color=TEXT,
+                 va="top")
         self.heur = [fig.text(mx + 0.01, 0.305 - i * 0.02, "", fontsize=9.2, color=TEXT2, va="top")
                      for i in range(2)]
         fig.text(mx + 0.01, 0.262, "GA:  fitness = Σ P(room) × arrival time", fontsize=9.5, color=TEXT, va="top")
@@ -266,15 +267,18 @@ class App:
                                    check_props={"facecolor": [BLUE] * 2, "s": [70] * 2})
         self.checks.on_clicked(self._toggle_view)
 
-        card(fig, cx, 0.012, cw, 0.378, "BENCHMARK")
-        fig.text(cx + 0.01, 0.348, f"{BENCH_N} scenarios in a row with the", fontsize=9, color=MUTED, va="top")
-        fig.text(cx + 0.01, 0.33, "current rooms and drones", fontsize=9, color=MUTED, va="top")
-        self.b_bench = self._button([cx + 0.01, 0.268, cw - 0.02, 0.044], f"Run {BENCH_N} missions",
+        self.b_info = self._button([cx, 0.345, cw, 0.045], "ⓘ  How it works", self.toggle_info, name="info")
+
+        card(fig, cx, 0.012, cw, 0.322, "BENCHMARK")
+        fig.text(cx + 0.01, 0.3, f"{BENCH_N} scenarios in a row with the", fontsize=9, color=MUTED, va="top")
+        fig.text(cx + 0.01, 0.283, "current rooms and drones", fontsize=9, color=MUTED, va="top")
+        self.b_bench = self._button([cx + 0.01, 0.222, cw - 0.02, 0.042], f"Run {BENCH_N} missions",
                                     self.toggle_bench, name="bench")
-        self.bench_text = [fig.text(cx + 0.01, 0.245 - i * 0.021, "", fontsize=9.8, color=TEXT2, va="center")
+        self.bench_text = [fig.text(cx + 0.01, 0.2 - i * 0.02, "", fontsize=9.8, color=TEXT2, va="center")
                            for i in range(4)]
-        self.ax_bench = fig.add_axes([cx + 0.02, 0.035, cw - 0.03, 0.105], facecolor=CARD)
+        self.ax_bench = fig.add_axes([cx + 0.02, 0.03, cw - 0.03, 0.085], facecolor=CARD)
         self.ax_bench.set_axis_off()
+        self._build_info()
 
         # ---------------- blitting regions (the maps are added in build())
         self.regions = r = Regions(fig)
@@ -371,6 +375,8 @@ class App:
     def toggle(self):
         if self.bench:
             return
+        if self.ax_info.get_visible():           # starting closes the explanation panel
+            self.toggle_info()
         if self.m.done:
             self.build()
         self.running = not self.running
@@ -388,6 +394,105 @@ class App:
 
     def _toggle_view(self, _label):
         self.show_person, self.show_plan = self.checks.get_status()
+        self.redraw()
+
+    # ---------------- "How it works" panel (covers the two maps while open)
+    def _build_info(self):
+        import textwrap
+        fig = self.fig
+        x0, y0, w, h = 0.012, 0.012, 0.573, 0.793
+        self.ax_info = ax = fig.add_axes([x0, y0, w, h], facecolor=CARD, zorder=20)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for s in ax.spines.values():
+            s.set_color(EDGE)
+        ax.text(0.025, 0.965, "HOW IT WORKS", fontsize=15, fontweight="bold", color=TEXT, va="top",
+                transform=ax.transAxes)
+        ax.text(0.975, 0.965, "press ⓘ again or i to close", fontsize=9, color=MUTED, va="top", ha="right",
+                transform=ax.transAxes)
+        steps = [
+            ("1  Where is the person?   Bayesian search map",
+             "Every free cell starts equally likely. When a drone looks at a cell and does not see the person, that "
+             "cell's probability is multiplied by (1 − p_detect) and the map is renormalised. p_detect is high up close "
+             "and low far away or in smoke, so a quick look through smoke leaves some probability behind and the room "
+             "is searched again. Blue on the lower map = still likely."),
+            ("2  Which drone searches which rooms?   Genetic algorithm",
+             "A chromosome is an order of all rooms, split between the drones. Fitness = expected time to find the "
+             "person = Σ P(room) × time the drone reaches that room, so likely rooms that are close come first. "
+             "60 candidates evolve for up to 100 generations (tournament selection, order crossover, inversion and "
+             "swap mutation); the plan is re-made whenever the map changes."),
+            ("3  How does a drone fly there?   A* search",
+             "The building is a grid of 0.5 m cells; a drone moves in 8 directions (straight step = 1, diagonal "
+             "step = √2). A* always expands the cell with the smallest f(n) = g(n) + h(n): g = distance flown so far, "
+             "h = estimate of the distance still to go (the heuristic, right). Burning cells are never entered."),
+            ("4  Rescue",
+             "When a drone sees the person, the nearest drone flies to them and leads them back to the entrance along "
+             "an A* path; the other drones leave."),
+            ("Metrics",
+             "Success = the person reaches the exit alive.  Efficiency = best possible rescue time ÷ our time, where "
+             "best possible = an all-knowing rescuer that knows where the person is.  POS = probability that the "
+             "search so far would have found the person."),
+        ]
+        y = 0.9
+        for title, body in steps:
+            ax.text(0.025, y, title, fontsize=11, fontweight="bold", color=BLUE if title[0].isdigit() else GREEN,
+                    va="top", transform=ax.transAxes)
+            lines = textwrap.fill(body, 78)
+            ax.text(0.025, y - 0.037, lines, fontsize=9.6, color=TEXT2, va="top", transform=ax.transAxes,
+                    linespacing=1.3)
+            y -= 0.062 + 0.0245 * (lines.count("\n") + 1)
+
+        # right column: the heuristic, with a worked example
+        ax.text(0.6, 0.89, "The heuristic: octile distance", fontsize=11.5, fontweight="bold", color=FIRE, va="top",
+                transform=ax.transAxes)
+        d = fig.add_axes([x0 + 0.6 * w, y0 + 0.5 * h, 0.37 * w, 0.32 * h], facecolor=CARD, zorder=21)
+        self.ax_oct = d
+        for i in range(7):
+            for j in range(5):
+                d.add_patch(plt.Rectangle((i - 0.5, j - 0.5), 1, 1, fill=False, ec=EDGE, lw=0.8))
+        path = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 3), (5, 3)]
+        d.plot([p[0] for p in path], [p[1] for p in path], color=BLUE, lw=2.5, marker="o", ms=5, zorder=3)
+        d.plot([0, 5], [0, 3], color=MUTED, lw=1.2, ls=(0, (3, 2)), zorder=2)
+        d.plot([0, 5, 5], [0, 0, 3], color=RED, lw=1.2, ls=(0, (1, 2)), zorder=2)
+        for (xa, ya), (xb, yb) in zip(path, path[1:]):
+            d.text((xa + xb) / 2 - 0.15, (ya + yb) / 2 + 0.2, "√2" if xb - xa and yb - ya else "1", fontsize=9,
+                   color=TEXT, ha="center", zorder=4)
+        d.text(0, -0.35, "start", fontsize=9, color=TEXT, ha="center", va="top")
+        d.text(5, 3.35, "goal", fontsize=9, color=TEXT, ha="center", va="bottom")
+        d.set_xlim(-0.6, 6.6)
+        d.set_ylim(-0.9, 4.6)
+        d.set_aspect("equal")
+        d.set_axis_off()
+        expl = [
+            ("h = max(dx, dy) + (√2 − 1) · min(dx, dy)", BLUE),
+            ("Example: dx = 5, dy = 3", TEXT),
+            ("→ 3 diagonal (3 × 1.414) + 2 straight = 6.24 cells", TEXT),
+            ("blue = octile 6.24 · grey = straight line 5.83", MUTED),
+            ("red = 4-direction route 8", MUTED),
+            ("", TEXT),
+            ("Octile distance = the shortest route on an open", TEXT2),
+            ("grid when you may move straight and diagonally:", TEXT2),
+            ("go diagonally as far as possible, then straight.", TEXT2),
+            ("Walls and fire only make the real route longer,", TEXT2),
+            ("so h never overestimates (admissible) and A* still", TEXT2),
+            ("returns the shortest path, while expanding about", TEXT2),
+            ("70 % fewer cells than Dijkstra (no heuristic).", TEXT2),
+        ]
+        for i, (t, c) in enumerate(expl):
+            ax.text(0.6, 0.47 - i * 0.034, t, fontsize=9.4, color=c, va="top", transform=ax.transAxes,
+                    fontweight="bold" if c == BLUE else "normal")
+        ax.set_visible(False)
+        d.set_visible(False)
+
+    def toggle_info(self):
+        show = not self.ax_info.get_visible()
+        if show:
+            self.running = False
+        for a in (self.ax_info, self.ax_oct):
+            a.set_visible(show)
+        for a in (self.ax_truth, self.ax_belief):
+            a.set_visible(not show)
+        self.b_info.label.set_text("✕  Close" if show else "ⓘ  How it works")
         self.redraw()
 
     def toggle_bench(self):
@@ -411,7 +516,8 @@ class App:
             self.bench_done, self.bench = b["rows"], None
 
     def _key(self, e):
-        {" ": self.toggle, "right": self.step_once, "r": self.reset, "n": self.random_scenario}.get(
+        {" ": self.toggle, "right": self.step_once, "r": self.reset, "n": self.random_scenario,
+         "i": self.toggle_info}.get(
             e.key, lambda: None)()
 
     def _tick(self):

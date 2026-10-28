@@ -95,6 +95,16 @@ app.checks.set_active(0)
 check("hiding the person works", not app.show_person)
 app.checks.set_active(0)
 
+click(app, "info")
+check("'How it works' opens the explanation over the maps", app.ax_info.get_visible() and not app.ax_truth.get_visible())
+click(app, "info")
+check("clicking it again closes it", not app.ax_info.get_visible() and app.ax_truth.get_visible())
+key(app, "i")
+click(app, "start")
+check("Start closes the explanation and runs", app.running and not app.ax_info.get_visible())
+click(app, "start")
+click(app, "reset")
+
 click(app, "start")
 t = time.time()
 while not app.m.done and time.time() - t < 120:
