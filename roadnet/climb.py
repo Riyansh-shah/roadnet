@@ -18,6 +18,8 @@ STEP0 = 60.0        # first nudge size (m)
 MIN_STEP = 1.0      # below this the climber has converged
 PATIENCE = 60       # failed tries before the nudge size halves
 P_ADD, P_REMOVE = 0.15, 0.15
+T0_FRAC = 0.05      # annealing: start temperature = T0_FRAC x (baseline cost / houses)
+T_END = 1e-3        # annealing: final temperature as a fraction of the start
 
 
 def budget_for(n):
@@ -170,7 +172,36 @@ def random_restart_hc(world, budget=None, seed=0):
     yield Snapshot(best, best, problem.evals, f"best of {restart} climbs", restarts=restart - 1, done=True)
 
 
-CLIMBERS = {"Simple hill climbing": simple_hc, "Random-restart hill climbing": random_restart_hc}
+def annealing(world, budget=None, seed=0):
+    """Simulated annealing: like hill climbing, but a longer network is also accepted with probability exp(-extra / T).
+
+    The temperature T starts high (worse moves are often accepted, so the search can leave a local optimum) and cools
+    geometrically to almost zero, where it behaves like plain hill climbing. The nudge size shrinks with T.
+    """
+    problem = Problem(world)
+    budget = budget or budget_for(world.n)
+    state = best = problem.evaluate(np.zeros((0, 2)))
+    if problem.n < 3:
+        yield Snapshot(state, state, problem.evals, "nothing to improve", done=True)
+        return
+    rng = np.random.default_rng(seed)
+    t0 = T0_FRAC * state.cost / problem.n
+    while problem.evals < budget:
+        cool = problem.evals / budget
+        temp = t0 * T_END ** cool
+        step = max(MIN_STEP, STEP0 * (temp / t0) ** 0.5)
+        cand = neighbour(problem, state, step, rng)
+        extra = cand.cost - state.cost
+        if extra < 0 or rng.random() < np.exp(-extra / temp):
+            state = cand
+            if state.cost < best.cost:
+                best = state
+        yield Snapshot(state, best, problem.evals, f"T = {temp:.1f}, step {step:.0f} m")
+    yield Snapshot(best, best, problem.evals, "cooled down", done=True)
+
+
+CLIMBERS = {"Simple hill climbing": simple_hc, "Random-restart hill climbing": random_restart_hc,
+            "Simulated annealing": annealing}
 
 
 def run(gen):
