@@ -136,6 +136,9 @@ def simple_hc(world, budget=None, seed=0):
     yield Snapshot(state, state, problem.evals, "budget used", done=True)
 
 
+CLIMBERS = {"Simple hill climbing": simple_hc}
+
+
 def run(gen):
     """Run a climber to the end and return its last snapshot."""
     snap = None
