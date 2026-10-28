@@ -6,6 +6,9 @@
 
 Each map shows one climber. They all start from the road network with no junctions (the minimum spanning tree over
 the houses) and get the same number of evaluations. The chart below tracks the best road each has found.
+
+Mouse, on any map: click = add a house, drag = move it, right-click = delete it.
+Keys: space solve/pause · → step · r reset · n new random map · l lakes · a 120° angles · + / − speed · q quit.
 """
 import argparse
 import sys
@@ -24,7 +27,7 @@ from matplotlib.widgets import Button
 from roadnet.climb import CLIMBERS, budget_for
 from roadnet.draw import MapView
 from roadnet.network import baseline
-from roadnet.world import MAX_HOUSES, World, random_world, square, triangle
+from roadnet.world import MAX_HOUSES, MIN_HOUSES, World, add_lakes, random_world, square, triangle
 
 BG, CARD, EDGE = "#1a1a19", "#242422", "#383835"
 TEXT, TEXT2, MUTED = "#f0efec", "#c3c2b7", "#898781"
@@ -36,8 +39,12 @@ FRAME_MS = 40
 GRAB = 45                                        # metres: how close a click must be to grab a house
 HINT = "Mouse, on any map:  click = add a house   ·   drag = move it   ·   right-click = delete it"
 
+PRESETS = {"triangle": triangle, "square": square}
+
 plt.rcParams.update({"font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 10, "text.color": TEXT,
                      "axes.edgecolor": EDGE, "toolbar": "None"})
+for _k in ("home", "back", "forward", "pan", "zoom", "save", "grid", "grid_minor", "xscale", "yscale"):
+    plt.rcParams[f"keymap.{_k}"] = []      # our own keys only (matplotlib's defaults clash with them)
 
 
 class Race:
@@ -73,7 +80,8 @@ class Race:
 
 
 class App:
-    def __init__(self, world, fullscreen=False):
+    def __init__(self, world, fullscreen=False, houses=12, seed=0):
+        self.n_houses, self.seed = houses, seed
         self.fig = plt.figure(figsize=(16, 9), facecolor=BG)
         self.fig.canvas.manager.set_window_title("RoadNet")
         if fullscreen:
@@ -147,12 +155,34 @@ class App:
         self.fig.text(0.585, y + 0.02, text, fontsize=9, color=MUTED, va="center")
 
     def _build_controls(self):
-        x, bh = 0.625, 0.04
-        self._row_label(0.145, "Run")
-        self.b_run = self._button([x, 0.145, 0.08, bh], "▶  Solve", self.toggle_run, primary=True)
-        self.b_step = self._button([x + 0.085, 0.145, 0.06, bh], "Step", self.step)
-        self.b_reset = self._button([x + 0.15, 0.145, 0.06, bh], "Reset", self.reset)
+        bh, g = 0.04, 0.005
+        self.buttons = []
+
+        def row(y, label, items):
+            """items: (width, label, callback, primary) for a button, or (width, None) for a value readout."""
+            self._row_label(y, label)
+            x, made = 0.62, []
+            for width, text, *rest in items:
+                if text is None:
+                    made.append(self.fig.text(x + width / 2, y + bh / 2, "", fontsize=9.5, ha="center", va="center"))
+                else:
+                    made.append(self._button([x, y, width, bh], text, rest[0], primary=bool(rest[1:])))
+                    self.buttons.append(made[-1])
+                x += width + g
+            return made
+
+        _, _, _, _, self.houses_text, _, self.b_lakes = row(0.215, "Map", [
+            (0.055, "Triangle", lambda: self.preset("triangle")), (0.055, "Square", lambda: self.preset("square")),
+            (0.055, "Random", self.new_random), (0.022, "−", lambda: self.change_houses(-1)), (0.05, None),
+            (0.022, "+", lambda: self.change_houses(+1)), (0.068, "Lakes: off", self.toggle_lakes)])
+        self.b_run, self.b_step, self.b_reset, _, self.speed_text, _ = row(0.145, "Run", [
+            (0.08, "▶  Solve", self.toggle_run, True), (0.055, "Step", self.step), (0.055, "Reset", self.reset),
+            (0.022, "−", lambda: self.change_speed(-1)), (0.06, None), (0.022, "+", lambda: self.change_speed(+1))])
+        self.b_angles, self.b_clear = row(0.075, "View", [
+            (0.105, "120° angles: off", self.toggle_angles), (0.07, "Clear map", self.clear)])
         self.hint = self.fig.text(0.585, 0.035, HINT, fontsize=9, color=MUTED, va="center")
+        self.houses_text.set_text(f"{self.n_houses} houses")
+        self.speed_text.set_text(f"speed ×{SPEEDS[self.speed]}")
 
     # ---------------------------------------------------------------- state
     def set_world(self, world):
@@ -161,6 +191,8 @@ class App:
         self.race = Race(world)
         for v in self.views:
             v.set_world(world)
+        if hasattr(self, "b_lakes"):
+            self.b_lakes.label.set_text(f"Lakes: {'on' if len(world.lakes) else 'off'}")
         best = f"   ·   known best {world.optimum:,.0f} m" if world.optimum else ""
         self.header.set_text(f"{world.n} houses   ·   no-junction road {self.race.base_cost:,.0f} m{best}   ·   "
                              f"{self.race.budget:,} evaluations per climber")
@@ -168,6 +200,44 @@ class App:
 
     def reset(self):
         self.set_world(self.world)
+
+    def preset(self, name):
+        self.set_world(PRESETS[name]())
+        self.hint.set_text(HINT)
+
+    def new_random(self, seed=None):
+        self.seed = self.seed + 1 if seed is None else seed
+        self.set_world(random_world(self.n_houses, self.seed, lakes=bool(len(self.world.lakes))))
+        self.hint.set_text(f"Random map #{self.seed}.   " + HINT)
+
+    def change_houses(self, delta):
+        self.n_houses = int(np.clip(self.n_houses + delta, MIN_HOUSES, MAX_HOUSES))
+        self.houses_text.set_text(f"{self.n_houses} houses")
+        self.new_random(self.seed)
+
+    def toggle_lakes(self):
+        w = self.world
+        if len(w.lakes):
+            w = PRESETS[w.name]() if w.name in PRESETS else World(w.houses, None, w.name)
+        else:
+            w = add_lakes(w, self.seed)
+            w.optimum = None
+        self.set_world(w)
+
+    def clear(self):
+        self.edit(np.zeros((0, 2)), "Click on a map to place houses (at least 3).")
+
+    def change_speed(self, delta):
+        self.speed = int(np.clip(self.speed + delta, 0, len(SPEEDS) - 1))
+        self.speed_text.set_text(f"speed ×{SPEEDS[self.speed]}")
+        self.fig.canvas.draw_idle()
+
+    def toggle_angles(self):
+        on = not self.views[0].show_angles
+        for v in self.views:
+            v.show_angles = on
+        self.b_angles.label.set_text(f"120° angles: {'on' if on else 'off'}")
+        self.refresh()
 
     def toggle_run(self):
         if self.running:
@@ -293,7 +363,9 @@ class App:
         self.drag = None
 
     def on_key(self, event):
-        actions = {" ": self.toggle_run, "right": self.step, "r": self.reset}
+        actions = {" ": self.toggle_run, "right": self.step, "r": self.reset, "n": self.new_random,
+                   "l": self.toggle_lakes, "a": self.toggle_angles, "+": lambda: self.change_speed(+1),
+                   "=": lambda: self.change_speed(+1), "-": lambda: self.change_speed(-1)}
         if event.key in actions:
             actions[event.key]()
 
@@ -307,7 +379,7 @@ def main():
     p.add_argument("--fullscreen", action="store_true")
     a = p.parse_args()
     world = {"square": square, "triangle": triangle}.get(a.preset, lambda: random_world(a.houses, a.seed, a.lakes))()
-    App(world, fullscreen=a.fullscreen)
+    App(world, fullscreen=a.fullscreen, houses=a.houses, seed=a.seed)
     plt.show()
 
 
