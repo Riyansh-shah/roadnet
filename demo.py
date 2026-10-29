@@ -1,12 +1,12 @@
-"""RoadNet app: three hill climbers race to connect the same houses with the least road.
+"""RoadNet app: simple hill climbing and simulated annealing race to connect the same houses with the least road.
 
     python demo.py                        interactive window (random map, 12 houses)
     python demo.py --preset square        start on a preset: triangle | square | random
     python demo.py --houses 15 --lakes    random map with 15 houses and lakes
     python demo.py --preset square --save figs/square.png    run to the end and save a picture (or .gif), no window
 
-Each map shows one climber. They all start from the road network with no junctions (the minimum spanning tree over
-the houses) and get the same number of evaluations. The chart below tracks the best road each has found.
+Each map shows one climber. Both start from the road network with no junctions (the minimum spanning tree over the
+houses) and get the same number of evaluations. The chart on the right tracks the best road each has found.
 
 Mouse, on any map: click = add a house, drag = move it, right-click = delete it.
 Keys: space solve/pause · → step · r reset · n new random map · l lakes · a 120° angles · i how it works ·
@@ -35,11 +35,12 @@ BG, CARD, EDGE = "#1a1a19", "#242422", "#383835"
 TEXT, TEXT2, MUTED = "#f0efec", "#c3c2b7", "#898781"
 BTN, BTN_H, BLUE, BLUE_H = "#2c2c2a", "#383835", "#3987e5", "#2a78d6"
 GRID = "#2c2c2a"
-SERIES = ["#3987e5", "#d95926", "#199e70"]       # one colour per climber (validated for the dark surface)
+SERIES = ["#3987e5", "#d95926"]                  # one colour per climber (validated for the dark surface)
+SHORT = {"Simple hill climbing": "Simple", "Simulated annealing": "Annealing"}
 SPEEDS = [1, 3, 10, 30, 100, 300]                # evaluations per frame, per climber
 FRAME_MS = 40
 GRAB = 45                                        # metres: how close a click must be to grab a house
-CHART_NOTE = "metres, against evaluations used (each climber gets the same budget)   ·   hover for values"
+CHART_NOTE = "metres vs evaluations used   ·   same budget for both   ·   hover for values"
 HINT = "Mouse, on any map:  click = add a house   ·   drag = move it   ·   right-click = delete it"
 
 PRESETS = {"triangle": triangle, "square": square}
@@ -56,12 +57,12 @@ which is a minimum spanning tree (Prim's algorithm).
 Start: no junctions, the plain spanning tree over the houses. This is the
 baseline without search.
 Moves: nudge a junction  ·  add one in the middle of a 'V' of roads  ·  remove one."""),
-    ("The three climbers (same number of evaluations each)", """Simple hill climbing tries a random move and keeps it only if the road gets
+    ("The two climbers (same number of evaluations each)", """Simple hill climbing tries a random move and keeps it only if the road gets
 shorter. When no nearby move helps, it is stuck at a local optimum and stops.
-Random-restart hill climbing starts again from random junctions whenever it
-is stuck, and keeps the best network it ever found.
-Simulated annealing also accepts a longer road with probability e^(−Δ/T), so it
-can climb out of a local optimum. T cools down, so it ends as hill climbing."""),
+Simulated annealing makes the same moves, but also accepts a longer road with
+probability e^(−Δ/T), so it can climb out of a local optimum. The temperature T
+cools down over the run, so it ends as plain hill climbing. It remembers the
+best network it has seen."""),
     ("How we know it works", """Triangle: the best network has one junction with three 120° angles,
 √3 × side = 1,732 m, which saves 13.4%.
 Square: the X costs 2,828 m, but the H with two junctions costs 2,732 m.
@@ -77,7 +78,7 @@ for _k in ("home", "back", "forward", "pan", "zoom", "save", "grid", "grid_minor
 
 
 class Race:
-    """The three climbers running on one map."""
+    """The climbers running on one map."""
 
     def __init__(self, world, seed=0):
         self.world = world
@@ -140,9 +141,10 @@ class App:
 
     def _build_maps(self):
         self.views, self.counters, self.details = [], [], []
-        w, h, y0 = 0.29, 0.29 * 16 / 9, 0.31
+        w = 0.30
+        h = w * 16 / 9                      # square on a 16:9 figure
         for i, name in enumerate(CLIMBERS):
-            x0 = 0.025 + i * (w + 0.04)
+            x0, y0 = 0.025 + i * (w + 0.035), 0.83 - h
             self.fig.add_artist(Line2D([x0, x0 + 0.022], [0.915, 0.915], color=SERIES[i], lw=3,
                                        solid_capstyle="round"))
             self.fig.text(x0 + 0.03, 0.915, name, fontsize=12, weight="bold", va="center")
@@ -151,9 +153,15 @@ class App:
             self.views.append(MapView(self.fig.add_axes([x0, y0, w, h])))
 
     def _build_chart(self):
-        self.fig.text(0.025, 0.272, "Best road found so far", fontsize=11, weight="bold", va="center")
-        self.subtitle = self.fig.text(0.16, 0.272, CHART_NOTE, fontsize=9, color=MUTED, va="center")
-        ax = self.chart = self.fig.add_axes([0.065, 0.06, 0.47, 0.18])
+        x0 = 0.705
+        self.fig.text(x0, 0.915, "Best road found so far", fontsize=12, weight="bold", va="center")
+        x = x0
+        for name, colour in zip(CLIMBERS, SERIES):           # legend
+            self.fig.add_artist(Line2D([x, x + 0.016], [0.877, 0.877], color=colour, lw=3, solid_capstyle="round"))
+            self.fig.text(x + 0.021, 0.877, name, fontsize=9.5, color=TEXT2, va="center")
+            x += 0.135
+        self.subtitle = self.fig.text(x0, 0.842, CHART_NOTE, fontsize=9, color=MUTED, va="center")
+        ax = self.chart = self.fig.add_axes([0.745, 0.33, 0.23, 0.50])
         ax.set_facecolor(BG)
         for side in ("top", "right", "left"):
             ax.spines[side].set_visible(False)
@@ -175,48 +183,45 @@ class App:
         ax = self.fig.add_axes(rect)
         b = Button(ax, label, color=BLUE if primary else BTN, hovercolor=BLUE_H if primary else BTN_H)
         b.label.set_color(TEXT)
-        b.label.set_fontsize(9.5)
+        b.label.set_fontsize(10.5)
         for s in ax.spines.values():
             s.set_color(EDGE)
         b.on_clicked(lambda _e: callback())
         return b
 
-    def _row_label(self, y, text):
-        self.fig.text(0.585, y + 0.02, text, fontsize=9, color=MUTED, va="center")
-
     def _build_controls(self):
-        bh, g = 0.04, 0.005
+        bh, g = 0.05, 0.006
         self.buttons = []
 
-        def row(y, label, items):
+        def row(x, y, label, items):
             """items: (width, label, callback, primary) for a button, or (width, None) for a value readout."""
-            self._row_label(y, label)
-            x, made = 0.62, []
+            self.fig.text(x, y + bh / 2, label, fontsize=10, color=MUTED, va="center")
+            x, made = x + 0.04, []
             for width, text, *rest in items:
                 if text is None:
-                    made.append(self.fig.text(x + width / 2, y + bh / 2, "", fontsize=9.5, ha="center", va="center"))
+                    made.append(self.fig.text(x + width / 2, y + bh / 2, "", fontsize=10.5, ha="center", va="center"))
                 else:
                     made.append(self._button([x, y, width, bh], text, rest[0], primary=bool(rest[1:])))
                     self.buttons.append(made[-1])
                 x += width + g
             return made
 
-        _, _, _, _, self.houses_text, _, self.b_lakes = row(0.215, "Map", [
-            (0.055, "Triangle", lambda: self.preset("triangle")), (0.055, "Square", lambda: self.preset("square")),
-            (0.055, "Random", self.new_random), (0.022, "−", lambda: self.change_houses(-1)), (0.05, None),
-            (0.022, "+", lambda: self.change_houses(+1)), (0.068, "Lakes: off", self.toggle_lakes)])
-        self.b_run, self.b_step, self.b_reset, _, self.speed_text, _ = row(0.145, "Run", [
-            (0.08, "▶  Solve", self.toggle_run, True), (0.055, "Step", self.step), (0.055, "Reset", self.reset),
-            (0.022, "−", lambda: self.change_speed(-1)), (0.06, None), (0.022, "+", lambda: self.change_speed(+1))])
-        self.b_angles, self.b_info, self.b_clear = row(0.075, "View", [
-            (0.105, "120° angles: off", self.toggle_angles), (0.1, "How it works", self.toggle_info),
-            (0.07, "Clear map", self.clear)])
-        self.hint = self.fig.text(0.585, 0.035, HINT, fontsize=9, color=MUTED, va="center")
+        _, _, _, _, self.houses_text, _, self.b_lakes = row(0.025, 0.16, "Map", [
+            (0.065, "Triangle", lambda: self.preset("triangle")), (0.065, "Square", lambda: self.preset("square")),
+            (0.065, "Random", self.new_random), (0.026, "−", lambda: self.change_houses(-1)), (0.06, None),
+            (0.026, "+", lambda: self.change_houses(+1)), (0.075, "Lakes: off", self.toggle_lakes)])
+        self.b_run, self.b_step, self.b_reset, _, self.speed_text, _ = row(0.5, 0.16, "Run", [
+            (0.09, "▶  Solve", self.toggle_run, True), (0.065, "Step", self.step), (0.065, "Reset", self.reset),
+            (0.026, "−", lambda: self.change_speed(-1)), (0.07, None), (0.026, "+", lambda: self.change_speed(+1))])
+        self.b_angles, self.b_info, self.b_clear = row(0.025, 0.08, "View", [
+            (0.12, "120° angles: off", self.toggle_angles), (0.11, "How it works", self.toggle_info),
+            (0.08, "Clear map", self.clear)])
+        self.hint = self.fig.text(0.5, 0.08 + bh / 2, HINT, fontsize=10, color=MUTED, va="center")
         self.houses_text.set_text(f"{self.n_houses} houses")
         self.speed_text.set_text(f"speed ×{SPEEDS[self.speed]}")
 
     def _build_info(self):
-        ax = self.info = self.fig.add_axes([0.02, 0.3, 0.96, 0.645])
+        ax = self.info = self.fig.add_axes([0.02, 0.27, 0.96, 0.675])
         ax.set_facecolor(CARD)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -338,9 +343,10 @@ class App:
             cur = snap.current
             view.show(cur.junctions, cur.edges)
             saved = 100 * (1 - snap.best.cost / race.base_cost)
+            k = len(cur.junctions)
             self.counters[i].set_text(f"{cur.cost:,.0f} m")
             self.details[i].set_text(f"best {snap.best.cost:,.0f} m (saves {saved:.1f}%)   ·   "
-                                     f"{len(cur.junctions)} junctions   ·   {snap.evals:,} evals   ·   {snap.status}")
+                                     f"{k} junction{'' if k == 1 else 's'}   ·   {snap.evals:,} evals   ·   {snap.status}")
         self._refresh_chart()
         self.fig.canvas.draw_idle()
 
@@ -415,7 +421,7 @@ class App:
             x = max(event.xdata, 0)
             self.cross.set_xdata([x, x])
             values = []
-            for name, h in zip(("Simple", "Restart", "Annealing"), self.race.history):
+            for name, h in zip([SHORT[n] for n in CLIMBERS], self.race.history):
                 h = np.array(h)
                 values.append(f"{name} {h[np.searchsorted(h[:, 0], x, side='right') - 1, 1]:,.0f} m")
             self.subtitle.set_text(f"at {x:,.0f} evals:   " + "   ·   ".join(values))
@@ -471,7 +477,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--preset", choices=["random", "square", "triangle"], default="random")
     p.add_argument("--houses", type=int, default=12)
-    p.add_argument("--seed", type=int, default=9)
+    p.add_argument("--seed", type=int, default=17)
     p.add_argument("--lakes", action="store_true")
     p.add_argument("--angles", action="store_true", help="label the angles at each junction")
     p.add_argument("--fullscreen", action="store_true")

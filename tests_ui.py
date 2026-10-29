@@ -103,7 +103,7 @@ mouse(app, "motion_notify_event", on_map(app, 640, 420))
 mouse(app, "button_release_event", on_map(app, 640, 420))
 moved = np.abs(app.world.houses[3] - [640, 420]).max()
 check("dragging moves a house", moved < 2 and app.world.n == 4, f"now at {app.world.houses[3].round()}")
-click(app, on_map(app, 640, 420, view=2), button=3)
+click(app, on_map(app, 640, 420, view=1), button=3)
 check("right-click deletes a house", app.world.n == 3)
 
 # keys
@@ -124,12 +124,12 @@ while app.race.snaps[0] is None or not app.race.finished:
     app.tick()                         # one animation frame: advance + redraw
     frames.append(time.perf_counter() - t)
 best = [s.best.cost for s in app.race.snaps]
-check("every climber finishes the square at the H (2,732 m)", all(abs(b - 2732.05) < 1 for b in best),
+check("both climbers finish the square at the H (2,732 m)", all(abs(b - 2732.05) < 1 for b in best),
       ", ".join(f"{b:,.1f}" for b in best))
 check("frame time under 150 ms", np.mean(frames) < 0.15,
       f"mean {1000 * np.mean(frames):.0f} ms, max {1000 * max(frames):.0f} ms over {len(frames)} frames")
 mouse(app, "motion_notify_event", app.chart.transData.transform((600, 2800)))
-check("hovering the chart reads out the three climbers", app.subtitle.get_text().startswith("at 600 evals"),
+check("hovering the chart reads out both climbers", app.subtitle.get_text().startswith("at 600 evals"),
       app.subtitle.get_text())
 
 print(f"\n{sum(results)}/{len(results)} checks passed")
