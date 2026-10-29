@@ -45,7 +45,7 @@ def on_map(app, x, y, view=0):
     return app.views[view].ax.transData.transform((x, y))
 
 
-app = demo.App(random_world(12, 9))
+app = demo.App(random_world(12, 9), blit=True)       # the same drawing path as the real window
 app.fig.canvas.draw()
 
 # buttons
@@ -126,11 +126,13 @@ while app.race.snaps[0] is None or not app.race.finished:
 best = [s.best.cost for s in app.race.snaps]
 check("both climbers finish the square at the H (2,732 m)", all(abs(b - 2732.05) < 1 for b in best),
       ", ".join(f"{b:,.1f}" for b in best))
-check("frame time under 150 ms", np.mean(frames) < 0.15,
+check("frame time under 100 ms (blitting)", np.mean(frames) < 0.10,
       f"mean {1000 * np.mean(frames):.0f} ms, max {1000 * max(frames):.0f} ms over {len(frames)} frames")
 mouse(app, "motion_notify_event", app.chart.transData.transform((600, 2800)))
-check("hovering the chart reads out both climbers", app.subtitle.get_text().startswith("at 600 evals"),
-      app.subtitle.get_text())
+check("hovering the chart reads out both climbers", app.readout.get_text().startswith("at 600 evals")
+      and not app.subtitle.get_visible(), app.readout.get_text())
+mouse(app, "motion_notify_event", on_map(app, 600, 600))
+check("leaving the chart brings the note back", app.subtitle.get_visible() and app.readout.get_text() == "")
 
 print(f"\n{sum(results)}/{len(results)} checks passed")
 sys.exit(0 if all(results) else 1)

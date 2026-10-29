@@ -38,7 +38,7 @@ GRID = "#2c2c2a"
 SERIES = ["#3987e5", "#d95926"]                  # one colour per climber (validated for the dark surface)
 SHORT = {"Simple hill climbing": "Simple", "Simulated annealing": "Annealing"}
 SPEEDS = [1, 3, 10, 30, 100, 300]                # evaluations per frame, per climber
-FRAME_MS = 40
+FRAME_MS = 15                                    # timer interval; a frame takes longer, so this is "as fast as it can"
 GRAB = 45                                        # metres: how close a click must be to grab a house
 CHART_NOTE = "metres vs evaluations used   ·   same budget for both   ·   hover for values"
 HINT = "Mouse, on any map:  click = add a house   ·   drag = move it   ·   right-click = delete it"
@@ -110,8 +110,12 @@ class Race:
 
 
 class App:
-    def __init__(self, world, fullscreen=False, houses=12, seed=0):
+    def __init__(self, world, fullscreen=False, houses=12, seed=0, blit=None):
         self.n_houses, self.seed = houses, seed
+        # Blitting: keep everything that does not move as a cached background and redraw only the moving parts each
+        # frame. Off when saving files (savefig leaves animated artists out).
+        self.blit = matplotlib.get_backend().lower() != "agg" if blit is None else blit
+        self._bg, self._dirty, self._ylim = None, True, None
         self.fig = plt.figure(figsize=(16, 9), facecolor=BG)
         self.fig.canvas.manager.set_window_title("RoadNet")
         if fullscreen:
@@ -123,6 +127,8 @@ class App:
         self._build_chart()
         self._build_controls()
         self._build_info()
+        for a in self._moving_texts() + self.lines + self.ends + [self.cross]:
+            a.set_animated(self.blit)
         self.timer = self.fig.canvas.new_timer(interval=FRAME_MS)
         self.timer.add_callback(self.tick)
         self.drag = None
@@ -130,6 +136,8 @@ class App:
         self.fig.canvas.mpl_connect("button_press_event", self.on_press)
         self.fig.canvas.mpl_connect("motion_notify_event", self.on_motion)
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
+        self.fig.canvas.mpl_connect("draw_event", self._on_draw)
+        self.fig.canvas.mpl_connect("close_event", lambda _e: self.pause())
         self.set_world(world)
 
     # ---------------------------------------------------------------- layout
@@ -150,7 +158,7 @@ class App:
             self.fig.text(x0 + 0.03, 0.915, name, fontsize=12, weight="bold", va="center")
             self.counters.append(self.fig.text(x0, 0.877, "", fontsize=19, weight="bold", va="center"))
             self.details.append(self.fig.text(x0, 0.842, "", fontsize=9, color=MUTED, va="center"))
-            self.views.append(MapView(self.fig.add_axes([x0, y0, w, h])))
+            self.views.append(MapView(self.fig.add_axes([x0, y0, w, h]), animated=self.blit))
 
     def _build_chart(self):
         x0 = 0.705
@@ -161,6 +169,7 @@ class App:
             self.fig.text(x + 0.021, 0.877, name, fontsize=9.5, color=TEXT2, va="center")
             x += 0.135
         self.subtitle = self.fig.text(x0, 0.842, CHART_NOTE, fontsize=9, color=MUTED, va="center")
+        self.readout = self.fig.text(x0, 0.842, "", fontsize=9, color=TEXT2, va="center")   # replaces it on hover
         ax = self.chart = self.fig.add_axes([0.745, 0.33, 0.23, 0.50])
         ax.set_facecolor(BG)
         for side in ("top", "right", "left"):
@@ -240,13 +249,18 @@ class App:
 
     def toggle_info(self):
         self.info.set_visible(not self.info.get_visible())
-        self.fig.canvas.draw_idle()
+        self.redraw()
+
+    def say(self, message):
+        self.hint.set_text(message)
+        self.redraw()
 
     # ---------------------------------------------------------------- state
     def set_world(self, world):
         self.world = world
         self.pause()
         self.race = Race(world)
+        self._reset_chart()
         for v in self.views:
             v.set_world(world)
         if hasattr(self, "b_lakes"):
@@ -261,12 +275,12 @@ class App:
 
     def preset(self, name):
         self.set_world(PRESETS[name]())
-        self.hint.set_text(HINT)
+        self.say(HINT)
 
     def new_random(self, seed=None):
         self.seed = self.seed + 1 if seed is None else seed
         self.set_world(random_world(self.n_houses, self.seed, lakes=bool(len(self.world.lakes))))
-        self.hint.set_text(f"Random map #{self.seed}.   " + HINT)
+        self.say(f"Random map #{self.seed}.   " + HINT)
 
     def change_houses(self, delta):
         self.n_houses = int(np.clip(self.n_houses + delta, MIN_HOUSES, MAX_HOUSES))
@@ -287,13 +301,14 @@ class App:
     def change_speed(self, delta):
         self.speed = int(np.clip(self.speed + delta, 0, len(SPEEDS) - 1))
         self.speed_text.set_text(f"speed ×{SPEEDS[self.speed]}")
-        self.fig.canvas.draw_idle()
+        self.redraw()
 
     def toggle_angles(self):
         on = not self.views[0].show_angles
         for v in self.views:
             v.show_angles = on
         self.b_angles.label.set_text(f"120° angles: {'on' if on else 'off'}")
+        self._dirty = True
         self.refresh()
 
     def toggle_run(self):
@@ -303,13 +318,14 @@ class App:
             self.running = True
             self.b_run.label.set_text("❚❚  Pause")
             self.timer.start()
-        self.fig.canvas.draw_idle()
+        self.redraw()
 
     def pause(self):
         self.running = False
         self.timer.stop()
         if hasattr(self, "b_run"):
             self.b_run.label.set_text("▶  Solve")
+        self._dirty = True
 
     def step(self):
         self.pause()
@@ -318,11 +334,13 @@ class App:
             self.refresh()
 
     def tick(self):
+        if not self.running:
+            return
         self.race.advance(SPEEDS[self.speed])
         self.refresh()
         if self.race.finished:
             self.pause()
-            self.fig.canvas.draw_idle()
+            self.redraw()
 
     # ---------------------------------------------------------------- drawing
     def refresh(self):
@@ -348,23 +366,13 @@ class App:
             self.details[i].set_text(f"best {snap.best.cost:,.0f} m (saves {saved:.1f}%)   ·   "
                                      f"{k} junction{'' if k == 1 else 's'}   ·   {snap.evals:,} evals   ·   {snap.status}")
         self._refresh_chart()
-        self.fig.canvas.draw_idle()
+        self._present()
 
-    def _refresh_chart(self):
-        race, ax = self.race, self.chart
-        lows = [race.base_cost]
-        for i, line in enumerate(self.lines):
-            h = np.array(race.history[i])
-            line.set_data(h[:, 0], h[:, 1])
-            self.ends[i].set_data(h[-1:, 0], h[-1:, 1])
-            lows.append(h[:, 1].min())
-        opt = self.world.optimum
-        if opt:
-            lows.append(opt)
-        lo, hi = min(lows), race.base_cost
-        pad = max(hi - lo, 1.0) * 0.12
-        ax.set_xlim(0, max(race.budget, 100) * 1.02)
-        ax.set_ylim(lo - pad, hi + pad)
+    def _reset_chart(self):
+        """Axes and reference lines for a new race (they stay fixed while it runs)."""
+        race, opt = self.race, self.world.optimum
+        hi = race.base_cost
+        self.chart.set_xlim(0, max(race.budget, 100) * 1.02)
         self.base_line.set_ydata([hi, hi])
         self.base_label.set_position((0, hi))
         self.best_line.set_visible(bool(opt))
@@ -372,6 +380,59 @@ class App:
         if opt:
             self.best_line.set_ydata([opt, opt])
             self.best_label.set_position((0, opt))
+        self._ylim = None
+
+    def _refresh_chart(self):
+        race = self.race
+        low = race.base_cost
+        for i, line in enumerate(self.lines):
+            h = np.array(race.history[i])
+            line.set_data(h[:, 0], h[:, 1])
+            self.ends[i].set_data(h[-1:, 0], h[-1:, 1])
+            low = min(low, h[:, 1].min())
+        if self.world.optimum:
+            low = min(low, self.world.optimum)
+        hi = race.base_cost
+        # widen the y range in steps (each one a full redraw), not every frame
+        if self._ylim is None or low < self._ylim[0] + 0.05 * (self._ylim[1] - self._ylim[0]):
+            span = max(hi - low, 0.01 * hi, 1.0)
+            self._ylim = (low - 0.3 * span, hi + 0.12 * span)
+            self.chart.set_ylim(*self._ylim)
+            self._dirty = True
+
+    def redraw(self):
+        """Full redraw, for when something in the background changed (labels, lakes, axis range)."""
+        self._dirty = True
+        self.fig.canvas.draw_idle()
+
+    def _present(self):
+        """Show a new frame: when blitting, restore the cached background and draw only the moving parts."""
+        canvas = self.fig.canvas
+        if not self.blit or self._dirty or self._bg is None:
+            canvas.draw_idle()
+            return
+        canvas.restore_region(self._bg)
+        self._draw_dynamic()
+        canvas.blit(self.fig.bbox)
+
+    def _on_draw(self, _event):
+        """After every full draw: cache the background, then put the moving parts on top."""
+        if self.blit:
+            self._bg = self.fig.canvas.copy_from_bbox(self.fig.bbox)
+            self._draw_dynamic()
+        self._dirty = False
+
+    def _moving_texts(self):
+        return self.counters + self.details + [self.readout]
+
+    def _draw_dynamic(self):
+        if self.info.get_visible():          # the panel covers the maps and the chart
+            return
+        for v in self.views:
+            for a in v.dynamic_artists():
+                self.fig.draw_artist(a)
+        for a in self._moving_texts() + [self.cross] + self.lines + self.ends:
+            self.fig.draw_artist(a)
 
     # ---------------------------------------------------------------- mouse editing
     def _map_point(self, event):
@@ -387,7 +448,7 @@ class App:
 
     def edit(self, houses, message=HINT):
         self.set_world(World(houses, self.world.lakes, name="custom"))
-        self.hint.set_text(message)
+        self.say(message)
 
     def on_press(self, event):
         if self.info.get_visible():
@@ -403,19 +464,20 @@ class App:
             self.drag = i
         elif event.button == 1:
             if self.world.n >= MAX_HOUSES:
-                self.hint.set_text(f"At most {MAX_HOUSES} houses.")
+                self.say(f"At most {MAX_HOUSES} houses.")
             elif self.world.in_lake(p, margin=20):
-                self.hint.set_text("No houses in a lake.")
+                self.say("No houses in a lake.")
             else:
                 self.edit(np.vstack([houses, p]))
-                return
-            self.fig.canvas.draw_idle()
         elif event.button == 3 and i is not None:
             self.edit(np.delete(houses, i, axis=0))
 
     def _hover_chart(self, event):
         """Crosshair on the chart: each climber's best road at the evaluation count under the mouse."""
         inside = event.inaxes is self.chart and event.xdata is not None and self.race.started
+        if inside == self.subtitle.get_visible():      # entering or leaving: swap the note for the readout
+            self.subtitle.set_visible(not inside)
+            self._dirty = True
         self.cross.set_visible(inside)
         if inside:
             x = max(event.xdata, 0)
@@ -424,12 +486,10 @@ class App:
             for name, h in zip([SHORT[n] for n in CLIMBERS], self.race.history):
                 h = np.array(h)
                 values.append(f"{name} {h[np.searchsorted(h[:, 0], x, side='right') - 1, 1]:,.0f} m")
-            self.subtitle.set_text(f"at {x:,.0f} evals:   " + "   ·   ".join(values))
-            self.subtitle.set_color(TEXT2)
+            self.readout.set_text(f"at {x:,.0f} evals:   " + "   ·   ".join(values))
         else:
-            self.subtitle.set_text(CHART_NOTE)
-            self.subtitle.set_color(MUTED)
-        self.fig.canvas.draw_idle()
+            self.readout.set_text("")
+        self._present()
 
     def on_motion(self, event):
         if event.inaxes is self.chart or self.cross.get_visible():
@@ -457,6 +517,7 @@ def save(app, path, gif_speed=3):
     if path.endswith(".gif"):
         from matplotlib.animation import PillowWriter
         app.change_speed(gif_speed - app.speed)
+        app.running = True
         writer = PillowWriter(fps=12)
         with writer.saving(app.fig, path, dpi=55):
             writer.grab_frame(facecolor=BG)

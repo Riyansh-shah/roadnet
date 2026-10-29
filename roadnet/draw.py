@@ -24,10 +24,15 @@ def house_shapes(x, y):
 
 
 class MapView:
-    """One map axes. set_world() when the houses or lakes change; show() for every new network."""
+    """One map axes. set_world() when the houses or lakes change; show() for every new network.
 
-    def __init__(self, ax):
+    With animated=True the network and houses are left out of normal redraws, so an app can keep the rest of the map
+    as a cached background and redraw only dynamic_artists() each frame (blitting).
+    """
+
+    def __init__(self, ax, animated=False):
         self.ax = ax
+        self.animated = animated
         ax.set_xlim(0, SIZE)
         ax.set_ylim(0, SIZE)
         ax.set_aspect("equal")
@@ -48,6 +53,15 @@ class MapView:
         self.angle_texts = []
         self.show_angles = False
         self.houses = np.zeros((0, 2))
+        for artist in self._network():
+            artist.set_animated(animated)
+
+    def _network(self):
+        return [self.casing, self.roads, self.glow, self.walls, self.roofs, self.junctions]
+
+    def dynamic_artists(self):
+        """What changes from frame to frame, in drawing order."""
+        return self._network() + self.angle_texts
 
     def set_world(self, world):
         self.houses = world.houses
@@ -82,4 +96,4 @@ class MapView:
             mid = h + np.radians(gap) / 2
             x, y = pts[node] + 62 * np.array([np.cos(mid), np.sin(mid)])
             self.angle_texts.append(self.ax.text(x, y, f"{gap:.0f}°", color=LABEL, fontsize=7.5, ha="center",
-                                                 va="center", zorder=8))
+                                                 va="center", zorder=8, animated=self.animated))
