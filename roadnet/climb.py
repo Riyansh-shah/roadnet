@@ -40,7 +40,6 @@ class Snapshot:
     best: State             # best seen so far
     evals: int
     status: str
-    restarts: int = 0
     done: bool = False
 
 
@@ -138,40 +137,6 @@ def simple_hc(world, budget=None, seed=0):
     yield Snapshot(state, state, problem.evals, "budget used", done=True)
 
 
-def random_start(problem, rng):
-    """A random set of junctions: each sits in the middle of three random houses, shaken a little."""
-    k = int(rng.integers(1, problem.n - 1))
-    trios = np.array([rng.choice(problem.n, 3, replace=False) for _ in range(k)])
-    J = problem.houses[trios].mean(axis=1) + rng.normal(0, STEP0, (k, 2))
-    return problem.evaluate(np.clip(J, 0, SIZE))
-
-
-def random_restart_hc(world, budget=None, seed=0):
-    """Hill climbing that restarts from a random set of junctions each time it gets stuck, keeping the best network.
-
-    Restart 1 starts from the no-junction network, exactly like simple hill climbing; the extra climbs use the budget
-    simple hill climbing leaves unused when it stops.
-    """
-    problem = Problem(world)
-    budget = budget or budget_for(world.n)
-    state = best = problem.evaluate(np.zeros((0, 2)))
-    if problem.n < 3:
-        yield Snapshot(state, state, problem.evals, "nothing to improve", done=True)
-        return
-    rng = np.random.default_rng(seed)
-    restart = 1
-    while problem.evals < budget:
-        for state, step, stuck in climb(problem, state, rng, budget):
-            if state.cost < best.cost:
-                best = state
-            yield Snapshot(state, best, problem.evals, f"climb {restart}, " + ("stuck, restarting" if stuck else
-                           f"step {step:.0f} m"), restarts=restart - 1)
-        if problem.evals < budget:
-            restart += 1
-            state = random_start(problem, rng)
-    yield Snapshot(best, best, problem.evals, f"best of {restart} climbs", restarts=restart - 1, done=True)
-
-
 def annealing(world, budget=None, seed=0):
     """Simulated annealing: like hill climbing, but a longer network is also accepted with probability exp(-extra / T).
 
@@ -200,8 +165,7 @@ def annealing(world, budget=None, seed=0):
     yield Snapshot(best, best, problem.evals, "cooled down", done=True)
 
 
-CLIMBERS = {"Simple hill climbing": simple_hc, "Random-restart hill climbing": random_restart_hc,
-            "Simulated annealing": annealing}
+CLIMBERS = {"Simple hill climbing": simple_hc, "Simulated annealing": annealing}
 
 
 def run(gen):
